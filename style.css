@@ -1186,10 +1186,17 @@ input[type="checkbox"] {
 }
 
 .small-group-settings,
+.small-group-worker-form,
 .small-group-meeting-fields {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.small-group-worker-form {
+  align-items: end;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
 }
 
 .small-group-worker-list {
@@ -1352,6 +1359,7 @@ input[type="checkbox"] {
   .lead-pool-list,
   .group-sheet-grid,
   .small-group-settings,
+  .small-group-worker-form,
   .small-group-meeting-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1376,6 +1384,7 @@ input[type="checkbox"] {
   .lead-pool-list,
   .group-sheet-grid,
   .small-group-settings,
+  .small-group-worker-form,
   .small-group-meeting-fields {
     grid-template-columns: 1fr;
   }
@@ -1508,6 +1517,7 @@ input[type="checkbox"] {
   .best-duty-options.compact-options,
   .pool-options,
   .small-group-settings,
+  .small-group-worker-form,
   .small-group-meeting-fields {
     grid-template-columns: 1fr;
   }

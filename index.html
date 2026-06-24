@@ -334,6 +334,21 @@
               <h2>小組同工設定</h2>
             </div>
           </div>
+          <form id="smallGroupWorkerForm" class="small-group-worker-form">
+            <label class="field">
+              <span>姓名</span>
+              <input id="smallGroupWorkerName" type="text" maxlength="20" placeholder="輸入小組同工姓名" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>暱稱</span>
+              <input id="smallGroupWorkerNickname" type="text" maxlength="20" placeholder="可留空" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>小組服事等級</span>
+              <select id="smallGroupWorkerLevel"></select>
+            </label>
+            <button class="primary-btn" type="submit">新增小組同工</button>
+          </form>
           <div id="smallGroupWorkerList" class="small-group-worker-list"></div>
         </section>
 

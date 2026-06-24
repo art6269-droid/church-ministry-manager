@@ -1,5 +1,6 @@
-const STORE_KEY = "church-ministry-manager-v3";
+const STORE_KEY = "church-ministry-manager-v4";
 const LEGACY_STORE_KEYS = [
+  "church-ministry-manager-v3",
   "church-ministry-manager-v2",
   "church-ministry-manager-v1",
   "toddler-sunday-school-scheduler-v6",
@@ -222,6 +223,10 @@ function bindElements() {
   elements.smallGroupIncludeMonthTheme = document.querySelector("#smallGroupIncludeMonthTheme");
   elements.smallGroupIncludeWeekTheme = document.querySelector("#smallGroupIncludeWeekTheme");
   elements.smallGroupIncludeSpeaker = document.querySelector("#smallGroupIncludeSpeaker");
+  elements.smallGroupWorkerForm = document.querySelector("#smallGroupWorkerForm");
+  elements.smallGroupWorkerName = document.querySelector("#smallGroupWorkerName");
+  elements.smallGroupWorkerNickname = document.querySelector("#smallGroupWorkerNickname");
+  elements.smallGroupWorkerLevel = document.querySelector("#smallGroupWorkerLevel");
   elements.smallGroupWorkerList = document.querySelector("#smallGroupWorkerList");
   elements.smallGroupMeetingTabs = document.querySelector("#smallGroupMeetingTabs");
   elements.smallGroupMeetingEditor = document.querySelector("#smallGroupMeetingEditor");
@@ -280,7 +285,9 @@ function bindEvents() {
   elements.smallGroupIncludeMonthTheme.addEventListener("change", updateSmallGroupSettings);
   elements.smallGroupIncludeWeekTheme.addEventListener("change", updateSmallGroupSettings);
   elements.smallGroupIncludeSpeaker.addEventListener("change", updateSmallGroupSettings);
+  elements.smallGroupWorkerForm.addEventListener("submit", addSmallGroupWorker);
   elements.smallGroupWorkerList.addEventListener("change", updateSmallGroupWorkerSettings);
+  elements.smallGroupWorkerList.addEventListener("click", deleteSmallGroupWorker);
   elements.smallGroupMeetingTabs.addEventListener("click", changeSmallGroupMeeting);
   elements.smallGroupMeetingEditor.addEventListener("input", updateSmallGroupMeeting);
   elements.smallGroupMeetingEditor.addEventListener("change", updateSmallGroupMeeting);
@@ -310,9 +317,8 @@ function loadState() {
 
 function createEmptyState() {
   return bindActiveServiceAliases({
-    version: 9,
-    volunteers: [],
-    ministries: createDefaultMinistries(),
+    version: 10,
+    ministries: createDefaultMinistries({}, []),
     activeMinistryId: ACTIVE_MINISTRY_ID,
     activeServiceId: ACTIVE_SERVICE_ID,
     futureFeatures: createFutureFeatureState(),
@@ -328,16 +334,16 @@ function createFutureFeatureState() {
 }
 
 function normalizeState(saved) {
-  const volunteers = Array.isArray(saved.volunteers)
+  const legacyVolunteers = Array.isArray(saved.volunteers)
     ? saved.volunteers
         .filter((worker) => worker?.id && String(worker.name || "").trim())
         .map((worker) => normalizeWorker(worker))
     : [];
+  const savedMinistries = saved.ministryModules || saved.ministries;
 
   return bindActiveServiceAliases({
-    version: 9,
-    volunteers,
-    ministries: normalizeMinistries(saved.ministries, saved.schedules),
+    version: 10,
+    ministries: normalizeMinistries(savedMinistries, saved.schedules, legacyVolunteers),
     activeMinistryId: saved.activeMinistryId || ACTIVE_MINISTRY_ID,
     activeServiceId: saved.activeServiceId || ACTIVE_SERVICE_ID,
     futureFeatures: normalizeFutureFeatures(saved.futureFeatures),
@@ -408,6 +414,59 @@ function normalizeFutureFeatures(savedFeatures = {}) {
   }, {});
 }
 
+function normalizeToddlerWorkers(workers = []) {
+  return Array.isArray(workers)
+    ? workers
+        .filter((worker) => worker?.id && String(worker.name || "").trim())
+        .map((worker) => normalizeWorker(worker))
+    : [];
+}
+
+function normalizeSmallGroupModuleWorkers(workers = []) {
+  return Array.isArray(workers)
+    ? workers
+        .filter((worker) => worker?.id && String(worker.name || "").trim())
+        .map((worker) => normalizeSmallGroupWorker(worker))
+    : [];
+}
+
+function normalizeSmallGroupWorker(worker = {}) {
+  return {
+    id: String(worker.id),
+    name: String(worker.name || "").trim(),
+    nickname: String(worker.nickname || "").trim(),
+    level: SMALL_GROUP_LEVELS.some((level) => level.id === worker.level) ? worker.level : "regular",
+    bestDuties: unique(Array.isArray(worker.bestDuties) ? worker.bestDuties : []).filter((dutyId) => getSmallGroupDuty(dutyId)),
+    weakDuties: unique(Array.isArray(worker.weakDuties) ? worker.weakDuties : []).filter((dutyId) => getSmallGroupDuty(dutyId)),
+    note: String(worker.note || ""),
+    createdAt: worker.createdAt || new Date().toISOString(),
+  };
+}
+
+function migrateSmallGroupWorkersFromLegacySettings(legacyVolunteers = [], legacySettings = {}) {
+  if (!legacySettings || typeof legacySettings !== "object") {
+    return [];
+  }
+
+  return Object.entries(legacySettings)
+    .filter(([, setting]) => setting?.enabled)
+    .map(([workerId, setting]) => {
+      const legacyWorker = legacyVolunteers.find((worker) => worker.id === workerId);
+      if (!legacyWorker) return null;
+      return normalizeSmallGroupWorker({
+        id: workerId,
+        name: legacyWorker.name,
+        nickname: legacyWorker.nickname,
+        level: setting.level,
+        bestDuties: setting.bestDuties,
+        weakDuties: setting.weakDuties,
+        note: setting.note || legacyWorker.note,
+        createdAt: legacyWorker.createdAt,
+      });
+    })
+    .filter(Boolean);
+}
+
 function normalizeUpgradeBackups(backups = []) {
   return Array.isArray(backups)
     ? backups
@@ -431,26 +490,6 @@ function normalizeSmallGroupSettings(settings = {}) {
       weekTheme: settings.includeFields?.weekTheme ?? true,
       speaker: settings.includeFields?.speaker ?? true,
     },
-  };
-}
-
-function normalizeSmallGroupWorkers(workers = {}) {
-  if (!workers || typeof workers !== "object") {
-    return {};
-  }
-  return Object.entries(workers).reduce((normalized, [workerId, setting]) => {
-    normalized[workerId] = normalizeSmallGroupWorkerSetting(setting);
-    return normalized;
-  }, {});
-}
-
-function normalizeSmallGroupWorkerSetting(setting = {}) {
-  return {
-    enabled: Boolean(setting.enabled),
-    level: SMALL_GROUP_LEVELS.some((level) => level.id === setting.level) ? setting.level : "regular",
-    bestDuties: unique(Array.isArray(setting.bestDuties) ? setting.bestDuties : []).filter((dutyId) => getSmallGroupDuty(dutyId)),
-    weakDuties: unique(Array.isArray(setting.weakDuties) ? setting.weakDuties : []).filter((dutyId) => getSmallGroupDuty(dutyId)),
-    note: String(setting.note || ""),
   };
 }
 
@@ -492,18 +531,19 @@ function createSmallGroupAnnouncementTemplate() {
   };
 }
 
-function createDefaultMinistries(legacySchedules = {}) {
+function createDefaultMinistries(legacySchedules = {}, legacyVolunteers = []) {
   return {
-    [ACTIVE_MINISTRY_ID]: createToddlerMinistryState(legacySchedules),
+    [ACTIVE_MINISTRY_ID]: createToddlerMinistryState(legacySchedules, legacyVolunteers),
     [SMALL_GROUP_MINISTRY_ID]: createSmallGroupMinistryState(),
   };
 }
 
-function createToddlerMinistryState(legacySchedules = {}) {
+function createToddlerMinistryState(legacySchedules = {}, workers = []) {
   return {
     id: ACTIVE_MINISTRY_ID,
     label: "幼兒主日學",
     implemented: true,
+    workers: normalizeToddlerWorkers(workers),
     serviceOrder: TODDLER_SERVICES.map((service) => service.id),
     services: TODDLER_SERVICES.reduce((services, service) => {
       services[service.id] = createToddlerServiceState(service, service.id === ACTIVE_SERVICE_ID ? legacySchedules : {});
@@ -539,6 +579,7 @@ function createSmallGroupMinistryState() {
     id: SMALL_GROUP_MINISTRY_ID,
     label: "小組服事表",
     implemented: true,
+    workers: [],
     serviceOrder: [SMALL_GROUP_SERVICE_ID],
     services: {
       [SMALL_GROUP_SERVICE_ID]: createSmallGroupServiceState(),
@@ -558,7 +599,6 @@ function createSmallGroupServiceState(saved = {}) {
     timeSlot: "small-group",
     implemented: true,
     settings: normalizeSmallGroupSettings(saved.settings),
-    workers: normalizeSmallGroupWorkers(saved.workers),
     meetings: normalizeSmallGroupMeetings(saved.meetings),
     announcementText: String(saved.announcementText || ""),
     announcementTemplate: saved.announcementTemplate || createSmallGroupAnnouncementTemplate(),
@@ -573,8 +613,8 @@ function createSmallGroupServiceState(saved = {}) {
   };
 }
 
-function normalizeMinistries(savedMinistries, legacySchedules = {}) {
-  const ministries = createDefaultMinistries(legacySchedules);
+function normalizeMinistries(savedMinistries, legacySchedules = {}, legacyVolunteers = []) {
+  const ministries = createDefaultMinistries(legacySchedules, legacyVolunteers);
   if (!savedMinistries || typeof savedMinistries !== "object") {
     return ministries;
   }
@@ -583,9 +623,13 @@ function normalizeMinistries(savedMinistries, legacySchedules = {}) {
     if (ministryId === SMALL_GROUP_MINISTRY_ID) {
       const base = createSmallGroupMinistryState();
       const savedService = ministry.services?.[SMALL_GROUP_SERVICE_ID] || ministry.service || {};
+      const migratedWorkers = Array.isArray(ministry.workers)
+        ? normalizeSmallGroupModuleWorkers(ministry.workers)
+        : migrateSmallGroupWorkersFromLegacySettings(legacyVolunteers, savedService.workers);
       ministries[ministryId] = {
         ...base,
         ...ministry,
+        workers: migratedWorkers,
         services: {
           [SMALL_GROUP_SERVICE_ID]: createSmallGroupServiceState(savedService),
         },
@@ -601,6 +645,9 @@ function normalizeMinistries(savedMinistries, legacySchedules = {}) {
     }
 
     const base = createToddlerMinistryState();
+    const ministryWorkers = Array.isArray(ministry.workers)
+      ? normalizeToddlerWorkers(ministry.workers)
+      : legacyVolunteers;
     const services = { ...base.services };
     Object.entries(ministry.services || {}).forEach(([serviceId, service]) => {
       const template = TODDLER_SERVICES.find((item) => item.id === serviceId) || { id: serviceId, label: service.label || serviceId, timeSlot: service.timeSlot || serviceId, implemented: Boolean(service.implemented) };
@@ -616,6 +663,7 @@ function normalizeMinistries(savedMinistries, legacySchedules = {}) {
     ministries[ministryId] = {
       ...base,
       ...ministry,
+      workers: ministryWorkers,
       services,
       serviceOrder: Array.isArray(ministry.serviceOrder) ? ministry.serviceOrder : base.serviceOrder,
       rules: { ...createToddlerRulesState(), ...(ministry.rules || {}) },
@@ -631,8 +679,13 @@ function bindActiveServiceAliases(appState) {
   const service = ministry?.services?.[appState.activeServiceId] || ministry?.services?.[fallbackServiceId] || ministry?.services?.[ACTIVE_SERVICE_ID];
   appState.activeMinistryId = ministry?.id || ACTIVE_MINISTRY_ID;
   appState.activeServiceId = service?.id || fallbackServiceId || ACTIVE_SERVICE_ID;
+  if (!Array.isArray(ministry.workers)) {
+    ministry.workers = [];
+  }
+  appState.volunteers = ministry.workers;
   appState.schedules = service?.schedules || {};
   appState.futureFeatures = service?.futureFeatures || appState.futureFeatures || createFutureFeatureState();
+  appState.ministryModules = appState.ministries;
   return appState;
 }
 
@@ -645,9 +698,12 @@ function getActiveServiceState() {
 }
 
 function syncActiveServiceState() {
+  const ministry = getActiveMinistryState();
   const service = getActiveServiceState();
+  ministry.workers = Array.isArray(state.volunteers) ? state.volunteers : [];
   service.schedules = state.schedules;
   service.futureFeatures = state.futureFeatures;
+  state.ministryModules = state.ministries;
 }
 
 function normalizeSchedules(schedules) {
@@ -839,8 +895,8 @@ function renderModulePanel() {
       </span>
     `).join("");
   const moduleNote = isSmallGroupModuleActive()
-    ? "小組服事表使用共用同工資料庫，聚會資訊與公告資料獨立儲存。"
-    : "目前優先完成幼兒主日學第一堂；同工資料為全系統共用，排班與規則封裝在此堂次。";
+    ? "小組服事表使用本模組同工資料庫，聚會資訊與公告資料獨立儲存。"
+    : "目前優先完成幼兒主日學第一堂；同工資料與排班規則都封裝在此模組。";
   const serviceTitle = isSmallGroupModuleActive() ? "小組服事表" : "幼兒主日學堂次";
 
   elements.modulePanel.innerHTML = `
@@ -850,7 +906,7 @@ function renderModulePanel() {
         <h2>${ministry.label}／${service.label}</h2>
         <p class="module-note">${moduleNote}</p>
       </div>
-      <span class="pill">共用同工資料庫</span>
+      <span class="pill">本模組同工資料庫</span>
     </div>
     <div class="module-grid">
       <div>
@@ -1454,37 +1510,39 @@ function renderSmallGroupSettings(service) {
 }
 
 function renderSmallGroupWorkers(service) {
+  elements.smallGroupWorkerLevel.innerHTML = renderSmallGroupLevelOptions(elements.smallGroupWorkerLevel.value || "regular");
+
   if (state.volunteers.length === 0) {
-    elements.smallGroupWorkerList.innerHTML = `<div class="empty-state">尚無共用同工資料</div>`;
+    elements.smallGroupWorkerList.innerHTML = `<div class="empty-state">尚無小組同工資料</div>`;
     return;
   }
 
   elements.smallGroupWorkerList.innerHTML = state.volunteers.map((worker) => {
-    const setting = getSmallGroupWorkerSetting(service, worker.id);
     return `
       <article class="small-group-worker-row">
         <div class="small-group-worker-head">
           <strong>${escapeHtml(worker.name)}</strong>
-          <label class="toggle-field">
-            <input type="checkbox" data-small-group-worker-enabled="${escapeAttribute(worker.id)}" ${setting.enabled ? "checked" : ""} />
-            <span>參與小組服事表</span>
-          </label>
+          <button class="delete-btn small-btn" type="button" data-delete-small-group-worker="${escapeAttribute(worker.id)}">刪除</button>
         </div>
         <label class="field">
+          <span>暱稱</span>
+          <input type="text" value="${escapeAttribute(worker.nickname || "")}" data-small-group-worker-nickname="${escapeAttribute(worker.id)}" />
+        </label>
+        <label class="field">
           <span>小組服事等級</span>
-          <select data-small-group-worker-level="${escapeAttribute(worker.id)}">${renderSmallGroupLevelOptions(setting.level)}</select>
+          <select data-small-group-worker-level="${escapeAttribute(worker.id)}">${renderSmallGroupLevelOptions(worker.level)}</select>
         </label>
         <fieldset class="best-duty-field">
           <legend>最適合小組服事項目</legend>
-          <div class="best-duty-options compact-options">${renderSmallGroupDutyCheckboxes(setting.bestDuties, worker.id, "best")}</div>
+          <div class="best-duty-options compact-options">${renderSmallGroupDutyCheckboxes(worker.bestDuties, worker.id, "best")}</div>
         </fieldset>
         <fieldset class="best-duty-field">
           <legend>不擅長小組服事項目</legend>
-          <div class="best-duty-options compact-options weak-duty-options">${renderSmallGroupDutyCheckboxes(setting.weakDuties, worker.id, "weak")}</div>
+          <div class="best-duty-options compact-options weak-duty-options">${renderSmallGroupDutyCheckboxes(worker.weakDuties, worker.id, "weak")}</div>
         </fieldset>
         <label class="field">
           <span>備註</span>
-          <textarea rows="2" data-small-group-worker-note="${escapeAttribute(worker.id)}">${escapeHtml(setting.note)}</textarea>
+          <textarea rows="2" data-small-group-worker-note="${escapeAttribute(worker.id)}">${escapeHtml(worker.note)}</textarea>
         </label>
       </article>
     `;
@@ -1577,30 +1635,75 @@ function updateSmallGroupSettings() {
 
 function updateSmallGroupWorkerSettings(event) {
   const target = event.target;
-  const workerId = target.dataset.smallGroupWorkerEnabled || target.dataset.smallGroupWorkerLevel || target.dataset.smallGroupWorkerBest || target.dataset.smallGroupWorkerWeak || target.dataset.smallGroupWorkerNote;
+  const workerId = target.dataset.smallGroupWorkerNickname || target.dataset.smallGroupWorkerLevel || target.dataset.smallGroupWorkerBest || target.dataset.smallGroupWorkerWeak || target.dataset.smallGroupWorkerNote;
   if (!workerId) return;
-  const service = getSmallGroupServiceState();
-  const setting = getSmallGroupWorkerSetting(service, workerId);
+  const worker = getWorker(workerId);
+  if (!worker) return;
 
-  if (target.dataset.smallGroupWorkerEnabled) {
-    setting.enabled = target.checked;
+  if (target.dataset.smallGroupWorkerNickname) {
+    worker.nickname = target.value;
   }
   if (target.dataset.smallGroupWorkerLevel) {
-    setting.level = target.value;
+    worker.level = target.value;
   }
   if (target.dataset.smallGroupWorkerBest) {
     const dutyId = target.dataset.dutyId;
-    setting.bestDuties = target.checked ? unique([...setting.bestDuties, dutyId]) : setting.bestDuties.filter((id) => id !== dutyId);
+    worker.bestDuties = target.checked ? unique([...worker.bestDuties, dutyId]) : worker.bestDuties.filter((id) => id !== dutyId);
   }
   if (target.dataset.smallGroupWorkerWeak) {
     const dutyId = target.dataset.dutyId;
-    setting.weakDuties = target.checked ? unique([...setting.weakDuties, dutyId]) : setting.weakDuties.filter((id) => id !== dutyId);
+    worker.weakDuties = target.checked ? unique([...worker.weakDuties, dutyId]) : worker.weakDuties.filter((id) => id !== dutyId);
   }
   if (target.dataset.smallGroupWorkerNote) {
-    setting.note = target.value;
+    worker.note = target.value;
   }
-  service.workers[workerId] = normalizeSmallGroupWorkerSetting(setting);
+  Object.assign(worker, normalizeSmallGroupWorker(worker));
   saveState();
+}
+
+function addSmallGroupWorker(event) {
+  event.preventDefault();
+  const name = elements.smallGroupWorkerName.value.trim();
+  if (!name) {
+    showToast("請輸入小組同工姓名");
+    return;
+  }
+  if (state.volunteers.some((worker) => worker.name === name)) {
+    showToast("小組服事表已有同名同工");
+    return;
+  }
+
+  state.volunteers.push(normalizeSmallGroupWorker({
+    id: createId(),
+    name,
+    nickname: elements.smallGroupWorkerNickname.value,
+    level: elements.smallGroupWorkerLevel.value,
+  }));
+  elements.smallGroupWorkerForm.reset();
+  render();
+  showToast("小組同工已新增");
+}
+
+function deleteSmallGroupWorker(event) {
+  const button = event.target.closest("[data-delete-small-group-worker]");
+  if (!button) return;
+  const workerId = button.dataset.deleteSmallGroupWorker;
+  const worker = getWorker(workerId);
+  if (!worker) return;
+  const ok = window.confirm(`確定要刪除小組同工「${worker.name}」嗎？相關小組服事安排也會清空。`);
+  if (!ok) return;
+
+  const service = getSmallGroupServiceState();
+  Object.values(service.meetings || {}).forEach((meeting) => {
+    SMALL_GROUP_DUTIES.forEach((duty) => {
+      if (meeting.assignments?.[duty.id] === workerId) {
+        meeting.assignments[duty.id] = "";
+      }
+    });
+  });
+  state.volunteers = state.volunteers.filter((item) => item.id !== workerId);
+  render();
+  showToast("小組同工已刪除");
 }
 
 function changeSmallGroupMeeting(event) {
@@ -1720,13 +1823,6 @@ function getSmallGroupMeetingList(service) {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function getSmallGroupWorkerSetting(service, workerId) {
-  if (!service.workers[workerId]) {
-    service.workers[workerId] = normalizeSmallGroupWorkerSetting({ enabled: false });
-  }
-  return service.workers[workerId];
-}
-
 function renderSmallGroupLevelOptions(currentValue) {
   return SMALL_GROUP_LEVELS.map((level) => `<option value="${level.id}" ${level.id === currentValue ? "selected" : ""}>${level.label}</option>`).join("");
 }
@@ -1744,7 +1840,6 @@ function renderSmallGroupDutyCheckboxes(currentValues, workerId, kind) {
 
 function renderSmallGroupWorkerOptions(service, currentValue = "") {
   return state.volunteers
-    .filter((worker) => getSmallGroupWorkerSetting(service, worker.id).enabled)
     .map((worker) => `<option value="${escapeAttribute(worker.id)}" ${worker.id === currentValue ? "selected" : ""}>${escapeHtml(getDisplayName(worker))}</option>`)
     .join("");
 }
