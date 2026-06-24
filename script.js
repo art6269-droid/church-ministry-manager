@@ -157,6 +157,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function bindElements() {
   elements.monthInput = document.querySelector("#monthInput");
+  elements.exportJsonBtn = document.querySelector("#exportJsonBtn");
+  elements.importJsonBtn = document.querySelector("#importJsonBtn");
+  elements.importJsonFile = document.querySelector("#importJsonFile");
   elements.manageModeBtn = document.querySelector("#manageModeBtn");
   elements.sheetModeBtn = document.querySelector("#sheetModeBtn");
   elements.modeSwitch = document.querySelector(".mode-switch");
@@ -236,6 +239,9 @@ function bindEvents() {
     render();
   });
 
+  elements.exportJsonBtn.addEventListener("click", exportJsonBackup);
+  elements.importJsonBtn.addEventListener("click", () => elements.importJsonFile.click());
+  elements.importJsonFile.addEventListener("change", importJsonBackup);
   elements.manageModeBtn.addEventListener("click", () => setView("manage"));
   elements.sheetModeBtn.addEventListener("click", () => setView("sheet"));
   elements.modulePanel.addEventListener("click", changeModule);
@@ -685,6 +691,62 @@ function normalizeAssignments(assignments = {}) {
 function saveState() {
   syncActiveServiceState();
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
+}
+
+function exportJsonBackup() {
+  syncActiveServiceState();
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    app: "Church Ministry Manager",
+    storeKey: STORE_KEY,
+    data: state,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `church-ministry-manager-backup-${formatBackupTimestamp(new Date())}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("JSON 備份已匯出");
+}
+
+function importJsonBackup(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result || "{}"));
+      const importedState = parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
+      const normalized = normalizeState(importedState);
+      const ok = window.confirm("匯入 JSON 備份會更新目前瀏覽器中的教會服事管理系統資料。系統會先建立匯入前備份。是否繼續？");
+      if (!ok) return;
+
+      createManualLocalBackup("before-json-import");
+      state = normalized;
+      bindActiveServiceAliases(state);
+      selectedMonth = getMonthKey(new Date());
+      selectedWeekId = pickInitialWeek(selectedMonth);
+      selectedSmallGroupMeetingId = "";
+      latestNotices = ["JSON 備份已匯入"];
+      render();
+      showToast("JSON 備份已匯入");
+    } catch {
+      showToast("JSON 檔案格式無法匯入");
+    }
+  };
+  reader.readAsText(file, "utf-8");
+}
+
+function createManualLocalBackup(prefix) {
+  syncActiveServiceState();
+  const name = `${prefix}-${formatBackupTimestamp(new Date())}`;
+  localStorage.setItem(`${UPGRADE_BACKUP_PREFIX}${name}`, JSON.stringify(state));
 }
 
 function render() {

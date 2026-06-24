@@ -29,6 +29,12 @@
             <span>排班月份</span>
             <input id="monthInput" type="month" />
           </label>
+
+          <div class="backup-tools" aria-label="JSON 備份">
+            <button id="exportJsonBtn" class="soft-btn small-btn" type="button">匯出 JSON</button>
+            <button id="importJsonBtn" class="ghost-btn small-btn" type="button">匯入 JSON</button>
+            <input id="importJsonFile" class="hidden" type="file" accept="application/json,.json" />
+          </div>
         </div>
       </header>
 

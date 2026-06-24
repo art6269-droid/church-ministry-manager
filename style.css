@@ -203,6 +203,14 @@ select:disabled {
   font-weight: 800;
 }
 
+.backup-tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-self: end;
+  min-width: min(220px, 100%);
+}
+
 .month-tools input,
 .field input,
 .field select,
@@ -1372,6 +1380,11 @@ input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
 
+  .backup-tools {
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+
   .topbar,
   .surface {
     border-radius: 8px;
@@ -1448,7 +1461,8 @@ input[type="checkbox"] {
   }
 
   .panel-actions > button,
-  .workspace-actions > button {
+  .workspace-actions > button,
+  .backup-tools > button {
     width: 100%;
   }
 
@@ -1487,6 +1501,7 @@ input[type="checkbox"] {
   }
 
   .week-tabs,
+  .backup-tools,
   .worker-controls,
   .worker-lead-groups,
   .best-duty-options,
