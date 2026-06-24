@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>教會服事管理系統 | Church Ministry Manager</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">Church Ministry Manager</p>
+            <h1>教會服事管理系統</h1>
+            <p class="brand-note">多事工、多團隊、多堂次的服事排班與同工管理</p>
+          </div>
+        </div>
+
+        <div class="top-actions">
+          <div class="mode-switch" aria-label="檢視模式">
+            <button id="manageModeBtn" class="mode-btn active" type="button">管理模式</button>
+            <button id="sheetModeBtn" class="mode-btn" type="button">服事表模式</button>
+          </div>
+
+          <label class="month-tools" for="monthInput">
+            <span>排班月份</span>
+            <input id="monthInput" type="month" />
+          </label>
+        </div>
+      </header>
+
+      <section id="modulePanel" class="surface module-panel"></section>
+
+      <section id="summaryPanel" class="surface summary-panel"></section>
+
+      <main id="managementView" class="main-layout">
+        <aside class="roster-panel surface">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Team</p>
+              <h2>同工設定</h2>
+            </div>
+            <span id="workerCount" class="pill">0 位</span>
+          </div>
+
+          <form id="volunteerForm" class="add-form">
+            <div class="form-section">
+              <h3>基本資料</h3>
+              <label class="field">
+                <span>姓名</span>
+                <input id="volunteerName" type="text" maxlength="20" placeholder="輸入同工姓名" autocomplete="off" />
+              </label>
+
+              <label class="field">
+                <span>暱稱</span>
+                <input id="volunteerNickname" type="text" maxlength="20" placeholder="可留空" autocomplete="off" />
+              </label>
+
+              <label class="field span-all">
+                <span>備註</span>
+                <textarea id="volunteerNote" rows="3" placeholder="可留空，例如：只能服事第一堂"></textarea>
+              </label>
+
+              <label class="field">
+                <span>同工等級</span>
+                <select id="volunteerLevel"></select>
+              </label>
+
+              <label class="field">
+                <span>同工身份</span>
+                <select id="volunteerType"></select>
+              </label>
+
+              <label id="specialTypeField" class="field hidden">
+                <span>特殊類型</span>
+                <select id="volunteerSpecialType"></select>
+              </label>
+
+              <fieldset class="best-duty-field">
+                <legend>最適合事工</legend>
+                <div id="volunteerBestDuties" class="best-duty-options"></div>
+              </fieldset>
+
+              <fieldset class="best-duty-field">
+                <legend>不擅長事工</legend>
+                <div id="volunteerWeakDuties" class="best-duty-options"></div>
+              </fieldset>
+
+              <label class="toggle-field">
+                <input id="volunteerHostCandidate" type="checkbox" />
+                <span>報告司會候選人</span>
+              </label>
+
+              <fieldset id="pastorReserveSettings" class="best-duty-field hidden">
+                <legend>區牧預留設定</legend>
+                <label class="field">
+                  <span>預留職務</span>
+                  <select id="volunteerReservedRole"></select>
+                </label>
+                <label class="field">
+                  <span>每月服事次數</span>
+                  <input id="volunteerMonthlyCount" type="number" min="0" max="5" value="1" />
+                </label>
+              </fieldset>
+            </div>
+
+            <div class="form-section">
+              <h3>固定設定</h3>
+              <label class="toggle-field">
+                <input id="fixedDutyEnabled" type="checkbox" />
+                <span>固定職務：啟用</span>
+              </label>
+              <label class="field">
+                <span>固定職務</span>
+                <select id="volunteerFixedRole"></select>
+              </label>
+
+              <label class="toggle-field">
+                <input id="fixedGroupEnabled" type="checkbox" />
+                <span>固定班級：啟用</span>
+              </label>
+              <label class="field">
+                <span>固定班級</span>
+                <select id="volunteerFixedGroup"></select>
+              </label>
+            </div>
+
+            <div id="allowedPreview" class="allowed-preview"></div>
+            <button class="primary-btn" type="submit">新增同工</button>
+          </form>
+
+          <div class="roster-tools" aria-label="同工篩選">
+            <label class="field">
+              <span>搜尋同工</span>
+              <input id="workerSearch" type="search" placeholder="輸入姓名" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>等級篩選</span>
+              <select id="levelFilter"></select>
+            </label>
+            <label class="field">
+              <span>身份篩選</span>
+              <select id="typeFilter"></select>
+            </label>
+          </div>
+
+          <div id="volunteerList" class="volunteer-list" aria-live="polite"></div>
+        </aside>
+
+        <section class="workspace">
+          <div class="workspace-actions">
+            <button id="autoMonthBtn" class="primary-btn" type="button">本月自動排班</button>
+            <button id="allAvailableBtn" class="soft-btn" type="button">本月全選可服事</button>
+            <button id="clearAvailabilityBtn" class="ghost-btn" type="button">清空本月可服事</button>
+          </div>
+
+          <section class="surface availability-panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Availability</p>
+                <h2>本月能服事</h2>
+              </div>
+              <span id="availabilitySummary" class="pill muted">0 格</span>
+            </div>
+            <div id="availabilityMatrix" class="availability-matrix"></div>
+          </section>
+
+          <section class="surface lead-pool-panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Group Pools</p>
+                <h2>小組主責與配搭群</h2>
+              </div>
+              <div class="panel-actions">
+                <button id="annualUpgradeBtn" class="soft-btn small-btn" type="button">年度升級</button>
+                <button id="restoreUpgradeBtn" class="ghost-btn small-btn" type="button">還原升級前備份</button>
+              </div>
+            </div>
+            <div id="leadPoolList" class="lead-pool-list"></div>
+          </section>
+
+          <nav id="weekTabs" class="week-tabs" aria-label="週次"></nav>
+
+          <section class="surface schedule-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Manual</p>
+                <h2 id="selectedWeekTitle">本週調整</h2>
+              </div>
+              <div class="panel-actions">
+                <span id="saveStatus" class="pill muted">未儲存</span>
+                <button id="saveWeekBtn" class="soft-btn small-btn" type="button">儲存本週</button>
+                <button id="clearWeekBtn" class="ghost-btn small-btn" type="button">清空本週</button>
+              </div>
+            </div>
+
+            <div class="schedule-block">
+              <div class="block-title">
+                <h3>主要職務</h3>
+                <span>小組老師另計</span>
+              </div>
+              <div id="mainAssignmentGrid" class="assignment-grid"></div>
+            </div>
+
+            <div class="schedule-block">
+              <div class="block-title">
+                <h3>小組老師</h3>
+                <span>每位能服事同工只分配一個班級</span>
+              </div>
+              <div id="groupAssignmentGrid" class="group-assignment-grid"></div>
+            </div>
+          </section>
+
+          <div class="lower-grid">
+            <section class="surface stats-panel">
+              <div class="section-heading compact">
+                <div>
+                  <p class="eyebrow">Balance</p>
+                  <h2>本月服事統計</h2>
+                </div>
+              </div>
+              <div id="statsList" class="stats-list"></div>
+            </section>
+
+            <section class="surface stats-panel">
+              <div class="section-heading compact">
+                <div>
+                  <p class="eyebrow">Year</p>
+                  <h2>今年服事統計</h2>
+                </div>
+              </div>
+              <div id="yearStatsList" class="stats-list year-stats-list"></div>
+            </section>
+
+            <section class="surface future-panel">
+              <div class="section-heading compact">
+                <div>
+                  <p class="eyebrow">Reserved</p>
+                  <h2>未來功能預留</h2>
+                </div>
+              </div>
+              <div id="futureList" class="future-list"></div>
+            </section>
+          </div>
+
+          <section class="surface records-panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Records</p>
+                <h2>本月排班紀錄</h2>
+              </div>
+            </div>
+            <div id="recordsList" class="records-list"></div>
+          </section>
+        </section>
+      </main>
+
+      <main id="sheetView" class="sheet-view hidden">
+        <section class="surface sheet-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Sheet</p>
+              <h2 id="sheetTitle">服事表</h2>
+            </div>
+          </div>
+          <div id="mainSheetTable" class="sheet-table-wrap"></div>
+        </section>
+
+        <section class="surface sheet-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Groups</p>
+              <h2>小組老師</h2>
+            </div>
+          </div>
+          <div id="groupSheetGrid" class="group-sheet-grid"></div>
+        </section>
+      </main>
+
+      <main id="smallGroupView" class="small-group-view hidden">
+        <section class="surface small-group-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Small Group</p>
+              <h2>小組服事表</h2>
+            </div>
+            <div class="panel-actions">
+              <button id="generateSmallGroupAnnouncementBtn" class="primary-btn small-btn" type="button">生成 LINE 公告</button>
+              <button id="copySmallGroupAnnouncementBtn" class="soft-btn small-btn" type="button">複製公告</button>
+            </div>
+          </div>
+
+          <div class="small-group-settings">
+            <label class="field">
+              <span>聚會星期</span>
+              <select id="smallGroupWeekday"></select>
+            </label>
+            <label class="field">
+              <span>一次排幾個月</span>
+              <select id="smallGroupMonthSpan">
+                <option value="1">1個月</option>
+                <option value="2">2個月</option>
+                <option value="3">3個月</option>
+              </select>
+            </label>
+            <label class="toggle-field">
+              <input id="smallGroupIncludeMonthTheme" type="checkbox" />
+              <span>列出本月主題</span>
+            </label>
+            <label class="toggle-field">
+              <input id="smallGroupIncludeWeekTheme" type="checkbox" />
+              <span>列出本週主題</span>
+            </label>
+            <label class="toggle-field">
+              <input id="smallGroupIncludeSpeaker" type="checkbox" />
+              <span>列出講員</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="surface small-group-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Workers</p>
+              <h2>小組同工設定</h2>
+            </div>
+          </div>
+          <div id="smallGroupWorkerList" class="small-group-worker-list"></div>
+        </section>
+
+        <section class="surface small-group-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Meetings</p>
+              <h2>每週聚會與服事安排</h2>
+            </div>
+          </div>
+          <nav id="smallGroupMeetingTabs" class="week-tabs" aria-label="小組聚會週次"></nav>
+          <div id="smallGroupMeetingEditor" class="small-group-meeting-editor"></div>
+        </section>
+
+        <section class="surface small-group-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">LINE</p>
+              <h2>公告文字</h2>
+            </div>
+          </div>
+          <textarea id="smallGroupAnnouncement" class="announcement-output" rows="14" readonly></textarea>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="upgradeDialog" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="upgradeDialogTitle">
+      <div class="modal-card">
+        <h2 id="upgradeDialogTitle">年度升級</h2>
+        <p>確定要進行年度升級嗎？此動作會更新所有老師的固定班級、主責群與配搭群。建議先匯出備份。</p>
+        <div class="modal-actions">
+          <button id="cancelUpgradeBtn" class="ghost-btn" type="button">取消</button>
+          <button id="confirmUpgradeBtn" class="primary-btn" type="button">確認升級</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
