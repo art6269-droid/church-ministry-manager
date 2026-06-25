@@ -20,11 +20,6 @@
         </div>
 
         <div class="top-actions">
-          <div class="mode-switch" aria-label="檢視模式">
-            <button id="manageModeBtn" class="mode-btn active" type="button">管理模式</button>
-            <button id="sheetModeBtn" class="mode-btn" type="button">服事表模式</button>
-          </div>
-
           <label class="month-tools" for="monthInput">
             <span>排班月份</span>
             <input id="monthInput" type="month" />
@@ -37,6 +32,11 @@
           </div>
         </div>
       </header>
+
+      <div class="mode-switch mode-switcher-fixed" aria-label="檢視模式">
+        <button id="manageModeBtn" class="mode-btn active" type="button">管理模式</button>
+        <button id="sheetModeBtn" class="mode-btn" type="button">服事表模式</button>
+      </div>
 
       <section id="modulePanel" class="surface module-panel"></section>
 
