@@ -30,8 +30,8 @@ const MINISTRY_MODULES = [
 
 const TODDLER_SERVICES = [
   { id: "first", label: "第一堂", timeSlot: "sunday-am-1", implemented: true },
-  { id: "second", label: "第二堂", timeSlot: "sunday-am-2", implemented: false },
-  { id: "third", label: "第三堂", timeSlot: "sunday-am-3", implemented: false },
+  { id: "second", label: "第二堂", timeSlot: "sunday-am-2", implemented: true },
+  { id: "third", label: "第三堂", timeSlot: "sunday-am-3", implemented: true },
 ];
 
 const MAIN_ROLES = [
@@ -99,7 +99,8 @@ const BEST_DUTIES = [
 const WORSHIP_ROLE_IDS = ["worshipSupport", "worshipLead"];
 const MESSAGE_ROLE_IDS = ["messageSupport", "messageLead"];
 const IMPORTANT_ROLE_IDS = [...WORSHIP_ROLE_IDS, ...MESSAGE_ROLE_IDS, "host"];
-const OPTIONAL_MAIN_ROLE_IDS = ["worshipSupport", "messageSupport"];
+const OPTIONAL_MAIN_ROLE_IDS = ["tech", "worshipSupport", "messageSupport"];
+const TRAINING_SUPPORT_ROLE_IDS = ["worshipSupport", "messageSupport"];
 const HOSPITALITY_ROLE_ID = "hospitality";
 const HOSPITALITY_MIN = 1;
 const HOSPITALITY_TARGET = 3;
@@ -125,6 +126,12 @@ const SMALL_GROUP_DUTIES = [
   { id: "word", label: "話語" },
   { id: "snack", label: "點心" },
 ];
+const SMALL_GROUP_LEVEL_DUTY_RULES = {
+  new: ["icebreaker", "snack"],
+  regular: ["icebreaker", "snack", "testimony"],
+  coworker: ["icebreaker", "snack", "testimony", "worship", "word"],
+  leader: ["icebreaker", "snack", "testimony", "worship", "word"],
+};
 
 const WEEKDAY_OPTIONS = [
   { id: 1, label: "週一", announcement: "一" },
@@ -137,6 +144,7 @@ const WEEKDAY_OPTIONS = [
 ];
 
 const elements = {};
+var activeWorkerAlias = null;
 let state = loadState();
 let selectedMonth = getMonthKey(new Date());
 let selectedWeekId = "";
@@ -148,6 +156,7 @@ let rosterSearchTerm = "";
 let rosterLevelFilter = "all";
 let rosterTypeFilter = "all";
 let selectedSmallGroupMeetingId = "";
+let expandedSmallGroupWorkerId = "";
 
 document.addEventListener("DOMContentLoaded", () => {
   bindElements();
@@ -177,6 +186,7 @@ function bindElements() {
   elements.volunteerType = document.querySelector("#volunteerType");
   elements.specialTypeField = document.querySelector("#specialTypeField");
   elements.volunteerSpecialType = document.querySelector("#volunteerSpecialType");
+  elements.volunteerMostSenior = document.querySelector("#volunteerMostSenior");
   elements.volunteerBestDuties = document.querySelector("#volunteerBestDuties");
   elements.volunteerWeakDuties = document.querySelector("#volunteerWeakDuties");
   elements.volunteerHostCandidate = document.querySelector("#volunteerHostCandidate");
@@ -194,6 +204,7 @@ function bindElements() {
   elements.volunteerList = document.querySelector("#volunteerList");
   elements.workerCount = document.querySelector("#workerCount");
   elements.autoMonthBtn = document.querySelector("#autoMonthBtn");
+  elements.autoMonthAvailabilityBtn = document.querySelector("#autoMonthAvailabilityBtn");
   elements.allAvailableBtn = document.querySelector("#allAvailableBtn");
   elements.clearAvailabilityBtn = document.querySelector("#clearAvailabilityBtn");
   elements.availabilitySummary = document.querySelector("#availabilitySummary");
@@ -228,8 +239,16 @@ function bindElements() {
   elements.smallGroupWorkerNickname = document.querySelector("#smallGroupWorkerNickname");
   elements.smallGroupWorkerLevel = document.querySelector("#smallGroupWorkerLevel");
   elements.smallGroupWorkerList = document.querySelector("#smallGroupWorkerList");
+  elements.autoSmallGroupScheduleBtn = document.querySelector("#autoSmallGroupScheduleBtn");
+  elements.smallGroupScheduleSummary = document.querySelector("#smallGroupScheduleSummary");
+  elements.smallGroupScheduleTable = document.querySelector("#smallGroupScheduleTable");
   elements.smallGroupMeetingTabs = document.querySelector("#smallGroupMeetingTabs");
   elements.smallGroupMeetingEditor = document.querySelector("#smallGroupMeetingEditor");
+  elements.exportSmallGroupImageBtn = document.querySelector("#exportSmallGroupImageBtn");
+  elements.downloadSmallGroupImageBtn = document.querySelector("#downloadSmallGroupImageBtn");
+  elements.smallGroupScheduleCanvas = document.querySelector("#smallGroupScheduleCanvas");
+  elements.smallGroupImageDownload = document.querySelector("#smallGroupImageDownload");
+  elements.smallGroupAnnouncementSettings = document.querySelector("#smallGroupAnnouncementSettings");
   elements.generateSmallGroupAnnouncementBtn = document.querySelector("#generateSmallGroupAnnouncementBtn");
   elements.copySmallGroupAnnouncementBtn = document.querySelector("#copySmallGroupAnnouncementBtn");
   elements.smallGroupAnnouncement = document.querySelector("#smallGroupAnnouncement");
@@ -278,6 +297,7 @@ function bindEvents() {
   elements.mainAssignmentGrid.addEventListener("change", updateMainAssignment);
   elements.groupAssignmentGrid.addEventListener("change", updateGroupAssignment);
   elements.autoMonthBtn.addEventListener("click", autoScheduleMonth);
+  elements.autoMonthAvailabilityBtn.addEventListener("click", autoScheduleMonth);
   elements.saveWeekBtn.addEventListener("click", saveCurrentWeekRecord);
   elements.clearWeekBtn.addEventListener("click", clearCurrentWeek);
   elements.smallGroupWeekday.addEventListener("change", updateSmallGroupSettings);
@@ -287,10 +307,17 @@ function bindEvents() {
   elements.smallGroupIncludeSpeaker.addEventListener("change", updateSmallGroupSettings);
   elements.smallGroupWorkerForm.addEventListener("submit", addSmallGroupWorker);
   elements.smallGroupWorkerList.addEventListener("change", updateSmallGroupWorkerSettings);
+  elements.smallGroupWorkerList.addEventListener("input", updateSmallGroupWorkerSettings);
+  elements.smallGroupWorkerList.addEventListener("click", toggleSmallGroupWorkerAccordion);
   elements.smallGroupWorkerList.addEventListener("click", deleteSmallGroupWorker);
+  elements.autoSmallGroupScheduleBtn.addEventListener("click", autoGenerateSmallGroupSchedule);
   elements.smallGroupMeetingTabs.addEventListener("click", changeSmallGroupMeeting);
   elements.smallGroupMeetingEditor.addEventListener("input", updateSmallGroupMeeting);
   elements.smallGroupMeetingEditor.addEventListener("change", updateSmallGroupMeeting);
+  elements.smallGroupAnnouncementSettings.addEventListener("input", updateSmallGroupMeeting);
+  elements.smallGroupAnnouncementSettings.addEventListener("change", updateSmallGroupMeeting);
+  elements.exportSmallGroupImageBtn.addEventListener("click", exportSmallGroupScheduleImage);
+  elements.downloadSmallGroupImageBtn.addEventListener("click", downloadSmallGroupScheduleImage);
   elements.generateSmallGroupAnnouncementBtn.addEventListener("click", generateSmallGroupAnnouncement);
   elements.copySmallGroupAnnouncementBtn.addEventListener("click", copySmallGroupAnnouncement);
 }
@@ -372,6 +399,7 @@ function normalizeWorker(worker) {
     identity,
     specialType,
     type,
+    mostSenior: ["senior", "leader"].includes(level) && Boolean(worker.mostSenior),
     bestDuties: unique(rawBestDuties).filter((dutyId) => getBestDuty(dutyId) && canDoWorker(ruleProfile, dutyId)),
     weakDuties: unique(Array.isArray(worker.weakDuties) ? worker.weakDuties : []).filter((dutyId) => getBestDuty(dutyId)),
     hostCandidate: Boolean(worker.hostCandidate) && canDoWorker(ruleProfile, "host"),
@@ -420,6 +448,21 @@ function normalizeToddlerWorkers(workers = []) {
         .filter((worker) => worker?.id && String(worker.name || "").trim())
         .map((worker) => normalizeWorker(worker))
     : [];
+}
+
+function dedupeWorkers(workers = []) {
+  const seen = new Set();
+  return workers.filter((worker) => {
+    if (!worker?.id || seen.has(worker.id)) {
+      return false;
+    }
+    seen.add(worker.id);
+    return true;
+  });
+}
+
+function isFullTimeWorker(worker) {
+  return normalizeWorkerIdentity(worker) === "fullTime";
 }
 
 function normalizeSmallGroupModuleWorkers(workers = []) {
@@ -539,26 +582,35 @@ function createDefaultMinistries(legacySchedules = {}, legacyVolunteers = []) {
 }
 
 function createToddlerMinistryState(legacySchedules = {}, workers = []) {
+  const normalizedWorkers = normalizeToddlerWorkers(workers);
+  const fullTimeWorkers = normalizedWorkers.filter(isFullTimeWorker);
+  const firstServiceWorkers = normalizedWorkers.filter((worker) => !isFullTimeWorker(worker));
   return {
     id: ACTIVE_MINISTRY_ID,
     label: "幼兒主日學",
     implemented: true,
-    workers: normalizeToddlerWorkers(workers),
+    workers: [],
+    fullTimeWorkers,
     serviceOrder: TODDLER_SERVICES.map((service) => service.id),
     services: TODDLER_SERVICES.reduce((services, service) => {
-      services[service.id] = createToddlerServiceState(service, service.id === ACTIVE_SERVICE_ID ? legacySchedules : {});
+      services[service.id] = createToddlerServiceState(
+        service,
+        service.id === ACTIVE_SERVICE_ID ? legacySchedules : {},
+        service.id === ACTIVE_SERVICE_ID ? firstServiceWorkers : [],
+      );
       return services;
     }, {}),
     rules: createToddlerRulesState(),
   };
 }
 
-function createToddlerServiceState(service, legacySchedules = {}) {
+function createToddlerServiceState(service, legacySchedules = {}, workers = []) {
   return {
     id: service.id,
     label: service.label,
     timeSlot: service.timeSlot,
     implemented: service.implemented,
+    workers: normalizeToddlerWorkers(workers).filter((worker) => !isFullTimeWorker(worker)),
     schedules: normalizeSchedules(legacySchedules || {}),
     rules: createToddlerRulesState(),
     futureFeatures: createFutureFeatureState(),
@@ -600,6 +652,7 @@ function createSmallGroupServiceState(saved = {}) {
     implemented: true,
     settings: normalizeSmallGroupSettings(saved.settings),
     meetings: normalizeSmallGroupMeetings(saved.meetings),
+    scheduleNotices: Array.isArray(saved.scheduleNotices) ? saved.scheduleNotices.map((notice) => String(notice)).slice(0, 80) : [],
     announcementText: String(saved.announcementText || ""),
     announcementTemplate: saved.announcementTemplate || createSmallGroupAnnouncementTemplate(),
     futureFeatures: {
@@ -645,25 +698,43 @@ function normalizeMinistries(savedMinistries, legacySchedules = {}, legacyVolunt
     }
 
     const base = createToddlerMinistryState();
-    const ministryWorkers = Array.isArray(ministry.workers)
+    const legacyMinistryWorkers = Array.isArray(ministry.workers)
       ? normalizeToddlerWorkers(ministry.workers)
-      : legacyVolunteers;
+      : normalizeToddlerWorkers(legacyVolunteers);
+    const savedFullTimeWorkers = normalizeToddlerWorkers(ministry.fullTimeWorkers || []).filter(isFullTimeWorker);
+    const fullTimeWorkers = dedupeWorkers([
+      ...savedFullTimeWorkers,
+      ...legacyMinistryWorkers.filter(isFullTimeWorker),
+      ...Object.values(ministry.services || {}).flatMap((service) => normalizeToddlerWorkers(service?.workers || []).filter(isFullTimeWorker)),
+    ]);
     const services = { ...base.services };
     Object.entries(ministry.services || {}).forEach(([serviceId, service]) => {
       const template = TODDLER_SERVICES.find((item) => item.id === serviceId) || { id: serviceId, label: service.label || serviceId, timeSlot: service.timeSlot || serviceId, implemented: Boolean(service.implemented) };
+      const savedServiceWorkers = normalizeToddlerWorkers(service.workers || []);
+      const migratedServiceWorkers = savedServiceWorkers.length
+        ? savedServiceWorkers
+        : serviceId === ACTIVE_SERVICE_ID
+          ? legacyMinistryWorkers.filter((worker) => !isFullTimeWorker(worker))
+          : [];
       services[serviceId] = {
         ...createToddlerServiceState(template),
         ...service,
+        implemented: template.implemented,
+        workers: dedupeWorkers(migratedServiceWorkers).filter((worker) => !isFullTimeWorker(worker)),
         schedules: normalizeSchedules(service.schedules || {}),
         rules: { ...createToddlerRulesState(), ...(service.rules || {}) },
         futureFeatures: normalizeFutureFeatures(service.futureFeatures),
       };
     });
+    if (legacyMinistryWorkers.length && !Array.isArray(ministry.services?.[ACTIVE_SERVICE_ID]?.workers)) {
+      services[ACTIVE_SERVICE_ID].workers = legacyMinistryWorkers.filter((worker) => !isFullTimeWorker(worker));
+    }
 
     ministries[ministryId] = {
       ...base,
       ...ministry,
-      workers: ministryWorkers,
+      workers: [],
+      fullTimeWorkers,
       services,
       serviceOrder: Array.isArray(ministry.serviceOrder) ? ministry.serviceOrder : base.serviceOrder,
       rules: { ...createToddlerRulesState(), ...(ministry.rules || {}) },
@@ -674,19 +745,64 @@ function normalizeMinistries(savedMinistries, legacySchedules = {}, legacyVolunt
 }
 
 function bindActiveServiceAliases(appState) {
+  syncActiveWorkerAlias(appState);
   const ministry = appState.ministries?.[appState.activeMinistryId] || appState.ministries?.[ACTIVE_MINISTRY_ID];
   const fallbackServiceId = Array.isArray(ministry?.serviceOrder) ? ministry.serviceOrder[0] : ACTIVE_SERVICE_ID;
   const service = ministry?.services?.[appState.activeServiceId] || ministry?.services?.[fallbackServiceId] || ministry?.services?.[ACTIVE_SERVICE_ID];
   appState.activeMinistryId = ministry?.id || ACTIVE_MINISTRY_ID;
   appState.activeServiceId = service?.id || fallbackServiceId || ACTIVE_SERVICE_ID;
-  if (!Array.isArray(ministry.workers)) {
-    ministry.workers = [];
-  }
-  appState.volunteers = ministry.workers;
+  appState.volunteers = getActiveWorkerAliasList(appState, ministry, service);
   appState.schedules = service?.schedules || {};
   appState.futureFeatures = service?.futureFeatures || appState.futureFeatures || createFutureFeatureState();
   appState.ministryModules = appState.ministries;
+  activeWorkerAlias = { ministryId: appState.activeMinistryId, serviceId: appState.activeServiceId };
   return appState;
+}
+
+function getActiveWorkerAliasList(appState, ministry, service) {
+  if (appState.activeMinistryId === SMALL_GROUP_MINISTRY_ID) {
+    if (!Array.isArray(ministry.workers)) ministry.workers = [];
+    return ministry.workers;
+  }
+
+  ensureToddlerWorkerStores(ministry);
+  if (!Array.isArray(service.workers)) service.workers = [];
+  return [...service.workers, ...ministry.fullTimeWorkers];
+}
+
+function syncActiveWorkerAlias(appState = state) {
+  if (!activeWorkerAlias || !Array.isArray(appState.volunteers)) {
+    return;
+  }
+
+  const ministry = appState.ministries?.[activeWorkerAlias.ministryId];
+  const service = ministry?.services?.[activeWorkerAlias.serviceId];
+  if (!ministry || !service) {
+    return;
+  }
+
+  if (activeWorkerAlias.ministryId === SMALL_GROUP_MINISTRY_ID) {
+    ministry.workers = normalizeSmallGroupModuleWorkers(appState.volunteers);
+    return;
+  }
+
+  ensureToddlerWorkerStores(ministry);
+  const normalizedWorkers = dedupeWorkers(normalizeToddlerWorkers(appState.volunteers));
+  ministry.fullTimeWorkers = normalizedWorkers.filter(isFullTimeWorker);
+  service.workers = normalizedWorkers.filter((worker) => !isFullTimeWorker(worker));
+  ministry.workers = [];
+}
+
+function ensureToddlerWorkerStores(ministry) {
+  if (!ministry || ministry.id !== ACTIVE_MINISTRY_ID) {
+    return;
+  }
+
+  ministry.fullTimeWorkers = dedupeWorkers(normalizeToddlerWorkers(ministry.fullTimeWorkers || [])).filter(isFullTimeWorker);
+  ministry.workers = [];
+  Object.values(ministry.services || {}).forEach((service) => {
+    service.workers = dedupeWorkers(normalizeToddlerWorkers(service.workers || [])).filter((worker) => !isFullTimeWorker(worker));
+  });
 }
 
 function getActiveMinistryState() {
@@ -698,9 +814,12 @@ function getActiveServiceState() {
 }
 
 function syncActiveServiceState() {
+  syncActiveWorkerAlias(state);
   const ministry = getActiveMinistryState();
   const service = getActiveServiceState();
-  ministry.workers = Array.isArray(state.volunteers) ? state.volunteers : [];
+  if (state.activeMinistryId === SMALL_GROUP_MINISTRY_ID) {
+    ministry.workers = Array.isArray(state.volunteers) ? state.volunteers : [];
+  }
   service.schedules = state.schedules;
   service.futureFeatures = state.futureFeatures;
   state.ministryModules = state.ministries;
@@ -850,7 +969,25 @@ function setView(view) {
   renderView();
 }
 
+function scrollToSheetView() {
+  window.requestAnimationFrame(() => {
+    elements.sheetView?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
 function changeModule(event) {
+  const serviceChip = event.target.closest("[data-service-id]");
+  if (serviceChip && !isSmallGroupModuleActive()) {
+    const service = TODDLER_SERVICES.find((item) => item.id === serviceChip.dataset.serviceId);
+    if (!service?.implemented) return;
+    state.activeServiceId = service.id;
+    currentView = "manage";
+    expandedWorkerId = "";
+    latestNotices = [];
+    render();
+    return;
+  }
+
   const chip = event.target.closest("[data-module-id]");
   if (!chip) return;
   const module = MINISTRY_MODULES.find((item) => item.id === chip.dataset.moduleId);
@@ -896,7 +1033,7 @@ function renderModulePanel() {
     `).join("");
   const moduleNote = isSmallGroupModuleActive()
     ? "小組服事表使用本模組同工資料庫，聚會資訊與公告資料獨立儲存。"
-    : "目前優先完成幼兒主日學第一堂；同工資料與排班規則都封裝在此模組。";
+    : "幼兒主日學三個堂次獨立管理同工；全職同工可跨堂共用。";
   const serviceTitle = isSmallGroupModuleActive() ? "小組服事表" : "幼兒主日學堂次";
 
   elements.modulePanel.innerHTML = `
@@ -940,6 +1077,8 @@ function renderFormOptions() {
   elements.specialTypeField.classList.toggle("hidden", identity !== "special");
   elements.volunteerBestDuties.innerHTML = renderBestDutyCheckboxes(getCheckedBestDuties(elements.volunteerBestDuties), ruleProfile);
   elements.volunteerWeakDuties.innerHTML = renderWeakDutyCheckboxes(getCheckedDuties(elements.volunteerWeakDuties));
+  elements.volunteerMostSenior.checked = ["senior", "leader"].includes(level) && elements.volunteerMostSenior.checked;
+  elements.volunteerMostSenior.disabled = !["senior", "leader"].includes(level);
   elements.volunteerHostCandidate.checked = canDoWorker(ruleProfile, "host") && elements.volunteerHostCandidate.checked;
   elements.volunteerHostCandidate.disabled = !canDoWorker(ruleProfile, "host");
   elements.pastorReserveSettings.classList.toggle("hidden", type !== "pastor");
@@ -1012,6 +1151,9 @@ function getWorkerSummary(worker) {
   if (worker.hostCandidate) {
     pieces.push("報告司會候選人");
   }
+  if (worker.mostSenior) {
+    pieces.push("最資深同工");
+  }
   if (effectiveType === "pastor" && worker.reservedMainRole) {
     pieces.push(`預留：${getMainRole(worker.reservedMainRole).label} ${worker.monthlyServiceCount} 次`);
   }
@@ -1059,6 +1201,14 @@ function renderVolunteerList() {
           <label class="toggle-field span-all">
             <input type="checkbox" data-worker-host-candidate="${escapeAttribute(worker.id)}" ${worker.hostCandidate ? "checked" : ""} />
             <span>報告司會候選人</span>
+          </label>
+        `
+        : "";
+      const mostSeniorControl = ["senior", "leader"].includes(worker.level)
+        ? `
+          <label class="toggle-field span-all">
+            <input type="checkbox" data-worker-most-senior="${escapeAttribute(worker.id)}" ${worker.mostSenior ? "checked" : ""} />
+            <span>最資深同工</span>
           </label>
         `
         : "";
@@ -1111,6 +1261,7 @@ function renderVolunteerList() {
               </label>
               ${specialTypeControl}
               ${hostCandidateControl}
+              ${mostSeniorControl}
               ${pastorReserveControl}
               <label class="span-all">
                 <span>最適合事工</span>
@@ -1300,10 +1451,7 @@ function renderMainAssignmentOptions(schedule, roleId, currentValue) {
 }
 
 function getEmptyMainRoleLabel(roleId) {
-  if (isOptionalMainRole(roleId)) {
-    return "本週無配搭";
-  }
-  return "待安排";
+  return getMainRoleEmptyLabel(roleId);
 }
 
 function renderGroupAssignments(schedule) {
@@ -1452,7 +1600,7 @@ function renderSheetView() {
     const cells = weeks
       .map((weekId) => {
         const workerName = getMainWorkerNames(ensureSchedule(weekId), role.id);
-        const emptyLabel = isOptionalMainRole(role.id) ? "本週無配搭" : "待補";
+        const emptyLabel = getMainRoleEmptyLabel(role.id);
         return `<td class="${workerName ? "" : "empty-cell"}">${escapeHtml(workerName || emptyLabel)}</td>`;
       })
       .join("");
@@ -1496,8 +1644,12 @@ function renderSmallGroupView() {
   ensureSmallGroupMeetings(service);
   renderSmallGroupSettings(service);
   renderSmallGroupWorkers(service);
+  renderSmallGroupScheduleSummary(service);
+  renderSmallGroupScheduleTable(service);
   renderSmallGroupMeetingTabs(service);
   renderSmallGroupMeetingEditor(service);
+  renderSmallGroupAnnouncementSettings(service);
+  renderSmallGroupScheduleImage(service);
   elements.smallGroupAnnouncement.value = service.announcementText || "";
 }
 
@@ -1518,35 +1670,106 @@ function renderSmallGroupWorkers(service) {
   }
 
   elements.smallGroupWorkerList.innerHTML = state.volunteers.map((worker) => {
+    const isOpen = expandedSmallGroupWorkerId === worker.id;
     return `
-      <article class="small-group-worker-row">
-        <div class="small-group-worker-head">
-          <strong>${escapeHtml(worker.name)}</strong>
-          <button class="delete-btn small-btn" type="button" data-delete-small-group-worker="${escapeAttribute(worker.id)}">刪除</button>
+      <article class="small-group-worker-row accordion-worker ${isOpen ? "open" : ""}">
+        <div class="worker-summary-line">
+          <button class="worker-summary" type="button" data-toggle-small-group-worker="${escapeAttribute(worker.id)}" aria-expanded="${isOpen}">
+            <span class="accordion-arrow">${isOpen ? "▼" : "▶"}</span>
+            <span class="worker-name">${escapeHtml(worker.name)}</span>
+            <span class="worker-summary-text">${escapeHtml(getSmallGroupWorkerSummary(worker))}</span>
+          </button>
         </div>
-        <label class="field">
-          <span>暱稱</span>
-          <input type="text" value="${escapeAttribute(worker.nickname || "")}" data-small-group-worker-nickname="${escapeAttribute(worker.id)}" />
-        </label>
-        <label class="field">
-          <span>小組服事等級</span>
-          <select data-small-group-worker-level="${escapeAttribute(worker.id)}">${renderSmallGroupLevelOptions(worker.level)}</select>
-        </label>
-        <fieldset class="best-duty-field">
-          <legend>最適合小組服事項目</legend>
-          <div class="best-duty-options compact-options">${renderSmallGroupDutyCheckboxes(worker.bestDuties, worker.id, "best")}</div>
-        </fieldset>
-        <fieldset class="best-duty-field">
-          <legend>不擅長小組服事項目</legend>
-          <div class="best-duty-options compact-options weak-duty-options">${renderSmallGroupDutyCheckboxes(worker.weakDuties, worker.id, "weak")}</div>
-        </fieldset>
-        <label class="field">
-          <span>備註</span>
-          <textarea rows="2" data-small-group-worker-note="${escapeAttribute(worker.id)}">${escapeHtml(worker.note)}</textarea>
-        </label>
+        <div class="worker-detail ${isOpen ? "" : "hidden"}">
+          <div class="worker-controls">
+            <label class="field">
+              <span>暱稱</span>
+              <input type="text" value="${escapeAttribute(worker.nickname || "")}" data-small-group-worker-nickname="${escapeAttribute(worker.id)}" />
+            </label>
+            <label class="field">
+              <span>小組服事等級</span>
+              <select data-small-group-worker-level="${escapeAttribute(worker.id)}">${renderSmallGroupLevelOptions(worker.level)}</select>
+            </label>
+            <fieldset class="best-duty-field">
+              <legend>最適合小組服事項目</legend>
+              <div class="best-duty-options compact-options">${renderSmallGroupDutyCheckboxes(worker.bestDuties, worker.id, "best")}</div>
+            </fieldset>
+            <fieldset class="best-duty-field">
+              <legend>不擅長小組服事項目</legend>
+              <div class="best-duty-options compact-options weak-duty-options">${renderSmallGroupDutyCheckboxes(worker.weakDuties, worker.id, "weak")}</div>
+            </fieldset>
+            <label class="field full-span">
+              <span>備註</span>
+              <textarea rows="3" data-small-group-worker-note="${escapeAttribute(worker.id)}">${escapeHtml(worker.note)}</textarea>
+            </label>
+          </div>
+          <button class="delete-btn small-btn" type="button" data-delete-small-group-worker="${escapeAttribute(worker.id)}">刪除小組同工</button>
+        </div>
       </article>
     `;
   }).join("");
+}
+
+function renderSmallGroupScheduleSummary(service) {
+  const meetings = getSmallGroupMeetingList(service);
+  const totalSlots = meetings.length * SMALL_GROUP_DUTIES.length;
+  const filledSlots = meetings.reduce((count, meeting) => {
+    return count + SMALL_GROUP_DUTIES.filter((duty) => meeting.assignments?.[duty.id]).length;
+  }, 0);
+  const notices = Array.isArray(service.scheduleNotices) ? service.scheduleNotices : [];
+  const noticeHtml = notices.length
+    ? `<details class="small-group-notices" open>
+        <summary>${notices.length} 則排班提醒</summary>
+        <ul>${notices.map((notice) => `<li>${escapeHtml(notice)}</li>`).join("")}</ul>
+      </details>`
+    : `<div class="muted-note">目前沒有排班提醒。</div>`;
+
+  elements.smallGroupScheduleSummary.innerHTML = `
+    <div class="small-group-summary-grid">
+      <div class="metric"><strong>${meetings.length}</strong><span>聚會週次</span></div>
+      <div class="metric"><strong>${filledSlots}</strong><span>已安排</span></div>
+      <div class="metric"><strong>${Math.max(totalSlots - filledSlots, 0)}</strong><span>待安排</span></div>
+    </div>
+    ${noticeHtml}
+  `;
+}
+
+function renderSmallGroupScheduleTable(service) {
+  const meetings = getSmallGroupMeetingList(service);
+  if (meetings.length === 0) {
+    elements.smallGroupScheduleTable.innerHTML = `<div class="empty-state">請先設定聚會月份與星期</div>`;
+    return;
+  }
+
+  const dutyHeaders = SMALL_GROUP_DUTIES.map((duty) => `<th>${duty.label}</th>`).join("");
+  const rows = meetings.map((meeting) => {
+    const assignments = SMALL_GROUP_DUTIES.map((duty) => {
+      const workerName = getSmallGroupAssignmentName(meeting.assignments?.[duty.id]);
+      return `<td class="${workerName ? "" : "empty-cell"}">${escapeHtml(workerName || "待安排")}</td>`;
+    }).join("");
+    return `
+      <tr>
+        <td>${escapeHtml(formatSmallGroupDateShort(meeting.date))}</td>
+        <td>${escapeHtml(meeting.location || "待填寫")}</td>
+        <td>${escapeHtml(formatAnnouncementTimeRange(meeting.startTime, meeting.endTime))}</td>
+        ${assignments}
+      </tr>
+    `;
+  }).join("");
+
+  elements.smallGroupScheduleTable.innerHTML = `
+    <table class="small-group-schedule-table">
+      <thead>
+        <tr>
+          <th>日期</th>
+          <th>地點</th>
+          <th>時間</th>
+          ${dutyHeaders}
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function renderSmallGroupMeetingTabs(service) {
@@ -1575,7 +1798,7 @@ function renderSmallGroupMeetingEditor(service) {
       <span class="role-label">${duty.label}</span>
       <select data-small-group-duty="${duty.id}">
         <option value="">待安排</option>
-        ${renderSmallGroupWorkerOptions(service, meeting.assignments[duty.id])}
+        ${renderSmallGroupWorkerOptions(service, meeting.assignments[duty.id], duty.id)}
       </select>
     </label>
   `).join("");
@@ -1598,6 +1821,26 @@ function renderSmallGroupMeetingEditor(service) {
         <span>聚會地點</span>
         <input type="text" value="${escapeAttribute(meeting.location)}" data-small-group-field="location" />
       </label>
+    </div>
+    <div class="schedule-block">
+      <div class="block-title">
+        <h3>本週服事表</h3>
+        <span>可留空</span>
+      </div>
+      <div class="assignment-grid">${dutyRows}</div>
+    </div>
+  `;
+}
+
+function renderSmallGroupAnnouncementSettings(service) {
+  const meeting = service.meetings[selectedSmallGroupMeetingId];
+  if (!meeting) {
+    elements.smallGroupAnnouncementSettings.innerHTML = "";
+    return;
+  }
+
+  elements.smallGroupAnnouncementSettings.innerHTML = `
+    <div class="small-group-meeting-fields">
       <label class="field">
         <span>本月主題</span>
         <input type="text" value="${escapeAttribute(meeting.monthTheme)}" data-small-group-field="monthTheme" />
@@ -1610,13 +1853,6 @@ function renderSmallGroupMeetingEditor(service) {
         <span>講員／主題分享者</span>
         <input type="text" value="${escapeAttribute(meeting.speaker)}" data-small-group-field="speaker" />
       </label>
-    </div>
-    <div class="schedule-block">
-      <div class="block-title">
-        <h3>本週服事表</h3>
-        <span>可留空</span>
-      </div>
-      <div class="assignment-grid">${dutyRows}</div>
     </div>
   `;
 }
@@ -1661,6 +1897,13 @@ function updateSmallGroupWorkerSettings(event) {
   saveState();
 }
 
+function toggleSmallGroupWorkerAccordion(event) {
+  const button = event.target.closest("[data-toggle-small-group-worker]");
+  if (!button) return;
+  expandedSmallGroupWorkerId = expandedSmallGroupWorkerId === button.dataset.toggleSmallGroupWorker ? "" : button.dataset.toggleSmallGroupWorker;
+  render();
+}
+
 function addSmallGroupWorker(event) {
   event.preventDefault();
   const name = elements.smallGroupWorkerName.value.trim();
@@ -1680,6 +1923,7 @@ function addSmallGroupWorker(event) {
     level: elements.smallGroupWorkerLevel.value,
   }));
   elements.smallGroupWorkerForm.reset();
+  expandedSmallGroupWorkerId = "";
   render();
   showToast("小組同工已新增");
 }
@@ -1702,8 +1946,140 @@ function deleteSmallGroupWorker(event) {
     });
   });
   state.volunteers = state.volunteers.filter((item) => item.id !== workerId);
+  expandedSmallGroupWorkerId = "";
   render();
   showToast("小組同工已刪除");
+}
+
+function autoGenerateSmallGroupSchedule() {
+  const service = getSmallGroupServiceState();
+  ensureSmallGroupMeetings(service);
+  const meetings = getSmallGroupMeetingList(service);
+  const workers = state.volunteers.map((worker) => normalizeSmallGroupWorker(worker));
+
+  if (workers.length === 0) {
+    showToast("請先新增小組同工");
+    return;
+  }
+
+  const notices = [];
+  const totalCounts = new Map(workers.map((worker) => [worker.id, 0]));
+  const dutyCounts = new Map();
+  let previousMeeting = null;
+
+  meetings.forEach((meeting) => {
+    const previousWorkerIds = new Set(previousMeeting ? Object.values(previousMeeting.assignments || {}).filter(Boolean) : []);
+    const usedThisMeeting = new Set();
+
+    SMALL_GROUP_DUTIES.forEach((duty) => {
+      const selectedWorker = pickSmallGroupWorkerForDuty(duty.id, workers, {
+        totalCounts,
+        dutyCounts,
+        previousWorkerIds,
+        previousDutyWorkerId: previousMeeting?.assignments?.[duty.id] || "",
+        usedThisMeeting,
+      });
+
+      if (!selectedWorker) {
+        meeting.assignments[duty.id] = "";
+        notices.push(`${formatSmallGroupDateShort(meeting.date)} ${duty.label} 無可用同工，保留待安排。`);
+        return;
+      }
+
+      meeting.assignments[duty.id] = selectedWorker.id;
+      const currentTotal = totalCounts.get(selectedWorker.id) || 0;
+      const dutyKey = `${selectedWorker.id}:${duty.id}`;
+      totalCounts.set(selectedWorker.id, currentTotal + 1);
+      dutyCounts.set(dutyKey, (dutyCounts.get(dutyKey) || 0) + 1);
+
+      if (previousMeeting?.assignments?.[duty.id] === selectedWorker.id) {
+        notices.push(`${formatSmallGroupDateShort(meeting.date)} ${getDisplayName(selectedWorker)} 連續兩週擔任「${duty.label}」，請確認人手是否足夠。`);
+      } else if (previousWorkerIds.has(selectedWorker.id)) {
+        notices.push(`${formatSmallGroupDateShort(meeting.date)} ${getDisplayName(selectedWorker)} 連續週服事，請確認人手是否足夠。`);
+      }
+      if (duty.id === "worship" && selectedWorker.level === "regular") {
+        notices.push(`${formatSmallGroupDateShort(meeting.date)} 敬拜人力不足，${getDisplayName(selectedWorker)}（一般）支援敬拜。`);
+      }
+      if (hasSmallGroupWeakDuty(selectedWorker, duty.id)) {
+        notices.push(`${getDisplayName(selectedWorker)} 被安排到不擅長小組服事項目：${duty.label}，請確認是否合適。`);
+      }
+      if (usedThisMeeting.has(selectedWorker.id)) {
+        notices.push(`${formatSmallGroupDateShort(meeting.date)} ${getDisplayName(selectedWorker)} 同週支援多項小組服事，請確認是否合適。`);
+      }
+
+      usedThisMeeting.add(selectedWorker.id);
+    });
+
+    previousMeeting = meeting;
+  });
+
+  service.scheduleNotices = unique(notices);
+  saveState();
+  render();
+  showToast("小組服事表已自動生成");
+}
+
+function pickSmallGroupWorkerForDuty(dutyId, workers, context) {
+  const candidatePools = [
+    workers.filter((worker) => canSmallGroupWorkerServeDuty(worker, dutyId, { allowWorshipFallback: false })),
+  ];
+  if (dutyId === "worship") {
+    candidatePools.push(workers.filter((worker) => canSmallGroupWorkerServeDuty(worker, dutyId, { allowWorshipFallback: true })));
+  }
+
+  const tiers = [
+    (worker) => !context.usedThisMeeting.has(worker.id) && worker.id !== context.previousDutyWorkerId && !context.previousWorkerIds.has(worker.id) && !hasSmallGroupWeakDuty(worker, dutyId),
+    (worker) => !context.usedThisMeeting.has(worker.id) && worker.id !== context.previousDutyWorkerId && !hasSmallGroupWeakDuty(worker, dutyId),
+    (worker) => !context.usedThisMeeting.has(worker.id) && worker.id !== context.previousDutyWorkerId,
+    (worker) => !context.usedThisMeeting.has(worker.id) && !context.previousWorkerIds.has(worker.id) && !hasSmallGroupWeakDuty(worker, dutyId),
+    (worker) => !context.usedThisMeeting.has(worker.id),
+    (worker) => !hasSmallGroupWeakDuty(worker, dutyId),
+    () => true,
+  ];
+
+  for (const filter of tiers) {
+    for (const pool of candidatePools) {
+      const candidates = uniqueWorkers(pool).filter(filter);
+      if (candidates.length > 0) {
+        return sortSmallGroupCandidates(candidates, dutyId, context)[0];
+      }
+    }
+  }
+
+  return null;
+}
+
+function sortSmallGroupCandidates(candidates, dutyId, context) {
+  return [...candidates].sort((a, b) => {
+    const scoreA = getSmallGroupCandidateScore(a, dutyId, context);
+    const scoreB = getSmallGroupCandidateScore(b, dutyId, context);
+    if (scoreA !== scoreB) return scoreA - scoreB;
+    return a.name.localeCompare(b.name, "zh-Hant");
+  });
+}
+
+function uniqueWorkers(workers) {
+  const seen = new Set();
+  return workers.filter((worker) => {
+    if (!worker?.id || seen.has(worker.id)) return false;
+    seen.add(worker.id);
+    return true;
+  });
+}
+
+function getSmallGroupCandidateScore(worker, dutyId, context) {
+  const dutyKey = `${worker.id}:${dutyId}`;
+  let score = 0;
+  if (!hasSmallGroupBestDuty(worker, dutyId)) score += 40;
+  if (["icebreaker", "snack"].includes(dutyId) && worker.level === "new") score -= 18;
+  if (dutyId === "worship" && worker.level === "regular") score += 45;
+  if (hasSmallGroupWeakDuty(worker, dutyId)) score += 80;
+  if (worker.id === context.previousDutyWorkerId) score += 90;
+  if (context.previousWorkerIds.has(worker.id)) score += 35;
+  if (context.usedThisMeeting.has(worker.id)) score += 60;
+  score += (context.totalCounts.get(worker.id) || 0) * 8;
+  score += (context.dutyCounts.get(dutyKey) || 0) * 6;
+  return score;
 }
 
 function changeSmallGroupMeeting(event) {
@@ -1724,7 +2100,11 @@ function updateSmallGroupMeeting(event) {
   }
   if (dutyId) {
     meeting.assignments[dutyId] = event.target.value;
+    service.scheduleNotices = [];
   }
+  renderSmallGroupScheduleSummary(service);
+  renderSmallGroupScheduleTable(service);
+  renderSmallGroupScheduleImage(service);
   saveState();
 }
 
@@ -1774,6 +2154,133 @@ function buildSmallGroupAnnouncement(service, meeting) {
   });
   lines.push("", service.announcementTemplate.closing);
   return lines.join("\n");
+}
+
+function exportSmallGroupScheduleImage() {
+  renderSmallGroupScheduleImage(getSmallGroupServiceState());
+  showToast("服事表圖片已產生，可下載或長按儲存");
+}
+
+function downloadSmallGroupScheduleImage() {
+  const canvas = elements.smallGroupScheduleCanvas;
+  if (!canvas) return;
+  renderSmallGroupScheduleImage(getSmallGroupServiceState());
+  const link = elements.smallGroupImageDownload;
+  link.href = canvas.toDataURL("image/png");
+  link.download = `small-group-schedule-${selectedMonth}.png`;
+  link.click();
+}
+
+function renderSmallGroupScheduleImage(service) {
+  const canvas = elements.smallGroupScheduleCanvas;
+  if (!canvas?.getContext) return;
+
+  const meetings = getSmallGroupMeetingList(service);
+  const columns = [
+    { label: "日期", width: 130, value: (meeting) => formatSmallGroupDateShort(meeting.date) },
+    { label: "地點", width: 230, value: (meeting) => meeting.location || "待填寫" },
+    { label: "時間", width: 180, value: (meeting) => formatAnnouncementTimeRange(meeting.startTime, meeting.endTime) },
+    ...SMALL_GROUP_DUTIES.map((duty) => ({
+      label: duty.label,
+      width: 150,
+      value: (meeting) => getSmallGroupAssignmentName(meeting.assignments?.[duty.id]) || "待安排",
+    })),
+  ];
+  const padding = 28;
+  const logicalWidth = columns.reduce((sum, column) => sum + column.width, padding * 2);
+  const titleHeight = 88;
+  const headerHeight = 54;
+  const rowHeight = 64;
+  const logicalHeight = titleHeight + headerHeight + Math.max(meetings.length, 1) * rowHeight + padding;
+  const ratio = Math.max(window.devicePixelRatio || 1, 1);
+  const ctx = canvas.getContext("2d");
+
+  canvas.width = logicalWidth * ratio;
+  canvas.height = logicalHeight * ratio;
+  canvas.style.width = `${logicalWidth}px`;
+  canvas.style.height = `${logicalHeight}px`;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+
+  ctx.fillStyle = "#fffaf1";
+  ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+  ctx.fillStyle = "#5c4635";
+  ctx.font = "800 28px 'Microsoft JhengHei', 'Noto Sans TC', sans-serif";
+  ctx.fillText("小組服事表", padding, 42);
+  ctx.font = "700 16px 'Microsoft JhengHei', 'Noto Sans TC', sans-serif";
+  ctx.fillStyle = "#8a6d50";
+  ctx.fillText(`${selectedMonth}｜${meetings.length} 次聚會`, padding, 68);
+
+  let x = padding;
+  let y = titleHeight;
+  ctx.fillStyle = "#f4e5d0";
+  ctx.fillRect(padding, y, logicalWidth - padding * 2, headerHeight);
+  ctx.strokeStyle = "#d9c4aa";
+  ctx.lineWidth = 1;
+  ctx.font = "800 18px 'Microsoft JhengHei', 'Noto Sans TC', sans-serif";
+  ctx.fillStyle = "#5c4635";
+  columns.forEach((column) => {
+    ctx.strokeRect(x, y, column.width, headerHeight);
+    ctx.fillText(column.label, x + 12, y + 34);
+    x += column.width;
+  });
+
+  if (meetings.length === 0) {
+    ctx.font = "700 18px 'Microsoft JhengHei', 'Noto Sans TC', sans-serif";
+    ctx.fillStyle = "#8a6d50";
+    ctx.fillText("請先設定聚會月份與星期", padding + 12, y + headerHeight + 40);
+    return;
+  }
+
+  y += headerHeight;
+  ctx.font = "700 17px 'Microsoft JhengHei', 'Noto Sans TC', sans-serif";
+  meetings.forEach((meeting, rowIndex) => {
+    x = padding;
+    ctx.fillStyle = rowIndex % 2 === 0 ? "#ffffff" : "#fff7e8";
+    ctx.fillRect(padding, y, logicalWidth - padding * 2, rowHeight);
+    columns.forEach((column) => {
+      ctx.strokeStyle = "#d9c4aa";
+      ctx.strokeRect(x, y, column.width, rowHeight);
+      ctx.fillStyle = "#3f352d";
+      drawCanvasTextLines(ctx, column.value(meeting), x + 12, y + 25, column.width - 24, 20, 2);
+      x += column.width;
+    });
+    y += rowHeight;
+  });
+}
+
+function drawCanvasTextLines(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
+  const lines = splitCanvasText(ctx, String(text || ""), maxWidth, maxLines);
+  lines.forEach((line, index) => {
+    ctx.fillText(line, x, y + index * lineHeight);
+  });
+}
+
+function splitCanvasText(ctx, text, maxWidth, maxLines = 2) {
+  const chars = Array.from(text);
+  const lines = [];
+  let current = "";
+
+  chars.forEach((char) => {
+    const next = `${current}${char}`;
+    if (ctx.measureText(next).width <= maxWidth || !current) {
+      current = next;
+      return;
+    }
+    lines.push(current);
+    current = char;
+  });
+
+  if (current) lines.push(current);
+  if (lines.length <= maxLines) return lines;
+
+  const clipped = lines.slice(0, maxLines);
+  let last = clipped[maxLines - 1];
+  while (last.length > 0 && ctx.measureText(`${last}…`).width > maxWidth) {
+    last = Array.from(last).slice(0, -1).join("");
+  }
+  clipped[maxLines - 1] = `${last}…`;
+  return clipped;
 }
 
 function getSmallGroupServiceState() {
@@ -1827,6 +2334,51 @@ function renderSmallGroupLevelOptions(currentValue) {
   return SMALL_GROUP_LEVELS.map((level) => `<option value="${level.id}" ${level.id === currentValue ? "selected" : ""}>${level.label}</option>`).join("");
 }
 
+function getSmallGroupLevel(levelId) {
+  return SMALL_GROUP_LEVELS.find((level) => level.id === levelId) || SMALL_GROUP_LEVELS[1];
+}
+
+function getSmallGroupWorkerSummary(worker) {
+  const pieces = [];
+  const nickname = String(worker.nickname || "").trim();
+  pieces.push(`暱稱：${nickname || "未填"}`);
+  pieces.push(`等級：${getSmallGroupLevel(worker.level).label}`);
+  const bestLabels = getSmallGroupDutyLabels(worker.bestDuties);
+  pieces.push(`擅長：${bestLabels.length ? bestLabels.join("、") : "未設定"}`);
+  if (String(worker.note || "").trim()) {
+    pieces.push("有備註");
+  }
+  return pieces.join("｜");
+}
+
+function getSmallGroupDutyLabels(dutyIds = []) {
+  return unique(Array.isArray(dutyIds) ? dutyIds : [])
+    .map((dutyId) => getSmallGroupDuty(dutyId)?.label)
+    .filter(Boolean);
+}
+
+function hasSmallGroupBestDuty(worker, dutyId) {
+  return Array.isArray(worker?.bestDuties) && worker.bestDuties.includes(dutyId);
+}
+
+function hasSmallGroupWeakDuty(worker, dutyId) {
+  return Array.isArray(worker?.weakDuties) && worker.weakDuties.includes(dutyId);
+}
+
+function canSmallGroupWorkerServeDuty(worker, dutyId, options = {}) {
+  if (!worker || !getSmallGroupDuty(dutyId)) return false;
+  const level = getSmallGroupLevel(worker.level).id;
+  if (SMALL_GROUP_LEVEL_DUTY_RULES[level]?.includes(dutyId)) {
+    return true;
+  }
+  return dutyId === "worship" && options.allowWorshipFallback && level === "regular";
+}
+
+function getSmallGroupLevelDutyLabels(levelId) {
+  const level = getSmallGroupLevel(levelId);
+  return getSmallGroupDutyLabels(SMALL_GROUP_LEVEL_DUTY_RULES[level.id] || []);
+}
+
 function renderSmallGroupDutyCheckboxes(currentValues, workerId, kind) {
   const selectedValues = new Set(Array.isArray(currentValues) ? currentValues : []);
   const dataName = kind === "weak" ? "data-small-group-worker-weak" : "data-small-group-worker-best";
@@ -1838,9 +2390,16 @@ function renderSmallGroupDutyCheckboxes(currentValues, workerId, kind) {
   `).join("");
 }
 
-function renderSmallGroupWorkerOptions(service, currentValue = "") {
+function renderSmallGroupWorkerOptions(service, currentValue = "", dutyId = "") {
   return state.volunteers
-    .map((worker) => `<option value="${escapeAttribute(worker.id)}" ${worker.id === currentValue ? "selected" : ""}>${escapeHtml(getDisplayName(worker))}</option>`)
+    .filter((worker) => {
+      return worker.id === currentValue || canSmallGroupWorkerServeDuty(worker, dutyId, { allowWorshipFallback: true });
+    })
+    .map((worker) => {
+      const isAllowed = canSmallGroupWorkerServeDuty(worker, dutyId, { allowWorshipFallback: true });
+      const suffix = isAllowed ? "" : "（等級不符）";
+      return `<option value="${escapeAttribute(worker.id)}" ${worker.id === currentValue ? "selected" : ""} ${isAllowed ? "" : "disabled"}>${escapeHtml(getDisplayName(worker) + suffix)}</option>`;
+    })
     .join("");
 }
 
@@ -1927,6 +2486,7 @@ function addVolunteer(event) {
     identity,
     specialType,
     type: identity === "special" ? specialType : identity,
+    mostSenior: elements.volunteerMostSenior.checked,
     bestDuties: getCheckedBestDuties(elements.volunteerBestDuties),
     weakDuties: getCheckedDuties(elements.volunteerWeakDuties),
     hostCandidate: elements.volunteerHostCandidate.checked,
@@ -1973,7 +2533,7 @@ function toggleWorkerAccordion(event) {
 
 function updateWorkerSettings(event) {
   const target = event.target;
-  const workerId = target.dataset.workerNickname || target.dataset.workerNote || target.dataset.workerLevel || target.dataset.workerIdentity || target.dataset.workerSpecialType || target.dataset.workerType || target.dataset.workerHostCandidate || target.dataset.workerReservedRole || target.dataset.workerMonthlyCount || target.dataset.workerBestDuty || target.dataset.workerWeakDuty || target.dataset.workerFixedDutyEnabled || target.dataset.workerFixedRole || target.dataset.workerFixedGroupEnabled || target.dataset.workerFixedGroup || target.dataset.workerLeadGroup || target.dataset.workerSupportGroup;
+  const workerId = target.dataset.workerNickname || target.dataset.workerNote || target.dataset.workerLevel || target.dataset.workerIdentity || target.dataset.workerSpecialType || target.dataset.workerType || target.dataset.workerHostCandidate || target.dataset.workerMostSenior || target.dataset.workerReservedRole || target.dataset.workerMonthlyCount || target.dataset.workerBestDuty || target.dataset.workerWeakDuty || target.dataset.workerFixedDutyEnabled || target.dataset.workerFixedRole || target.dataset.workerFixedGroupEnabled || target.dataset.workerFixedGroup || target.dataset.workerLeadGroup || target.dataset.workerSupportGroup;
   if (!workerId) {
     return;
   }
@@ -2009,6 +2569,9 @@ function updateWorkerSettings(event) {
   }
   if (target.dataset.workerHostCandidate) {
     worker.hostCandidate = target.checked;
+  }
+  if (target.dataset.workerMostSenior) {
+    worker.mostSenior = target.checked;
   }
   if (target.dataset.workerReservedRole) {
     worker.reservedMainRole = target.value;
@@ -2096,8 +2659,11 @@ function deleteVolunteer(event) {
     return;
   }
 
+  const schedulesToClean = isFullTimeWorker(worker)
+    ? Object.values(getActiveMinistryState().services || {}).flatMap((service) => Object.values(service.schedules || {}))
+    : Object.values(state.schedules);
   state.volunteers = state.volunteers.filter((item) => item.id !== worker.id);
-  Object.values(state.schedules).forEach((schedule) => {
+  schedulesToClean.forEach((schedule) => {
     schedule.available = schedule.available.filter((id) => id !== worker.id);
     removeAssignmentsForWorker(schedule, worker.id);
     schedule.savedAt = null;
@@ -2322,7 +2888,9 @@ function autoScheduleMonth() {
   addBestDutyNotices(selectedMonth, state.schedules, notices);
   addWorshipToMessageNotices(selectedMonth, state.schedules, notices);
   latestNotices = unique(notices);
+  currentView = "sheet";
   render();
+  scrollToSheetView();
   showToast(latestNotices.length ? "本月排班完成，摘要中有待確認內容" : "本月排班已完成");
 }
 
@@ -2679,6 +3247,9 @@ function getMainAssignmentIssue(workerId, roleId, weekId, schedules, options = {
   if (isMessageRole(roleId) && hasAnyMainRoleInMonth(workerId, WORSHIP_ROLE_IDS, monthKey, schedules, countOptions)) {
     return `${getDisplayName(worker)} 本月已安排敬拜服事，不能再安排信息`;
   }
+  if (roleId === "tech" && countMainRoleInMonth(workerId, "tech", monthKey, schedules, countOptions) > 0) {
+    return `${getDisplayName(worker)} 本月已擔任控台事工，控台同工同月不重複安排`;
+  }
   if (isImportantRole(roleId) && countMainRoleInMonth(workerId, roleId, monthKey, schedules, countOptions) > 0 && !(roleId === "host" && options.allowHostRepeat)) {
     return `${getDisplayName(worker)} 本月已擔任「${role.label}」，重要服事同月不可重複`;
   }
@@ -2934,6 +3505,11 @@ function compareMainCandidates(a, b, roleId, weekId, schedules) {
   const aNeedsMessageSupport = isSeniorWithPreviousMonthWorship(a, monthKey, schedules);
   const bNeedsMessageSupport = isSeniorWithPreviousMonthWorship(b, monthKey, schedules);
   const hostCandidateDiff = roleId === "host" ? Number(b.hostCandidate) - Number(a.hostCandidate) : 0;
+  const firstWeekSeniorRole = isFirstWeekSeniorLeadRole(roleId, weekId);
+  const firstWeekSeniorDiff = firstWeekSeniorRole ? Number(b.mostSenior) - Number(a.mostSenior) : 0;
+  const previousMonthLeadDiff = firstWeekSeniorRole
+    ? Number(hadMainRoleInMonth(a.id, roleId, getPreviousMonthKey(monthKey), schedules)) - Number(hadMainRoleInMonth(b.id, roleId, getPreviousMonthKey(monthKey), schedules))
+    : 0;
   const typeDiff = getAutoTypePriority(a, roleId) - getAutoTypePriority(b, roleId);
   const importantRoleCountDiff = isImportantRole(roleId)
     ? countMainRoleInMonth(a.id, roleId, monthKey, schedules) - countMainRoleInMonth(b.id, roleId, monthKey, schedules)
@@ -2944,7 +3520,15 @@ function compareMainCandidates(a, b, roleId, weekId, schedules) {
     ? Number(bNeedsMessageSupport) - Number(aNeedsMessageSupport)
     : Number(aNeedsMessageSupport) - Number(bNeedsMessageSupport);
   const consecutiveDiff = Number(hadSameMainRolePreviousWeek(a.id, roleId, weekId, schedules)) - Number(hadSameMainRolePreviousWeek(b.id, roleId, weekId, schedules));
-  return hostCandidateDiff || typeDiff || bestDutyDiff || weakDutyDiff || worshipToMessageDiff || importantRoleCountDiff || consecutiveDiff || aMonth.total - bMonth.total || aMonth.main - bMonth.main || aAll.total - bAll.total || a.name.localeCompare(b.name, "zh-Hant");
+  return hostCandidateDiff || firstWeekSeniorDiff || previousMonthLeadDiff || typeDiff || bestDutyDiff || weakDutyDiff || worshipToMessageDiff || importantRoleCountDiff || consecutiveDiff || aMonth.total - bMonth.total || aMonth.main - bMonth.main || aAll.total - bAll.total || a.name.localeCompare(b.name, "zh-Hant");
+}
+
+function isFirstWeekSeniorLeadRole(roleId, weekId) {
+  return ["worshipLead", "messageLead"].includes(roleId) && getSundaysOfMonth(weekId.slice(0, 7))[0] === weekId;
+}
+
+function hadMainRoleInMonth(workerId, roleId, monthKey, schedules) {
+  return getSundaysOfMonth(monthKey).some((weekId) => getMainAssignmentIds(schedules[weekId], roleId).includes(workerId));
 }
 
 function compareGroupLeadCandidates(a, b, groupId, weekId, schedules) {
@@ -3128,6 +3712,16 @@ function isMultiMainRole(roleId) {
 
 function isOptionalMainRole(roleId) {
   return OPTIONAL_MAIN_ROLE_IDS.includes(roleId);
+}
+
+function getMainRoleEmptyLabel(roleId) {
+  if (roleId === "tech") {
+    return "中央支援／待確認";
+  }
+  if (TRAINING_SUPPORT_ROLE_IDS.includes(roleId)) {
+    return "本週無配搭";
+  }
+  return "待補";
 }
 
 function getMainRoleTarget(roleId) {
@@ -3529,6 +4123,9 @@ function canDoWorker(worker, dutyId) {
 
 function canAutoAssignDuty(worker, dutyId) {
   if (!canDoWorker(worker, dutyId)) {
+    return false;
+  }
+  if (TRAINING_SUPPORT_ROLE_IDS.includes(dutyId) && worker.fixedMainRole !== dutyId && !hasBestDuty(worker, dutyId)) {
     return false;
   }
   const type = getEffectiveWorkerType(worker);

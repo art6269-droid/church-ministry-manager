@@ -85,6 +85,11 @@
                 <select id="volunteerSpecialType"></select>
               </label>
 
+              <label class="toggle-field">
+                <input id="volunteerMostSenior" type="checkbox" />
+                <span>最資深同工</span>
+              </label>
+
               <fieldset class="best-duty-field">
                 <legend>最適合事工</legend>
                 <div id="volunteerBestDuties" class="best-duty-options"></div>
@@ -172,6 +177,9 @@
               <span id="availabilitySummary" class="pill muted">0 格</span>
             </div>
             <div id="availabilityMatrix" class="availability-matrix"></div>
+            <div class="availability-actions">
+              <button id="autoMonthAvailabilityBtn" class="primary-btn large-action-btn" type="button">本月自動排班</button>
+            </div>
           </section>
 
           <section class="surface lead-pool-panel">
@@ -288,46 +296,6 @@
 
       <main id="smallGroupView" class="small-group-view hidden">
         <section class="surface small-group-panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Small Group</p>
-              <h2>小組服事表</h2>
-            </div>
-            <div class="panel-actions">
-              <button id="generateSmallGroupAnnouncementBtn" class="primary-btn small-btn" type="button">生成 LINE 公告</button>
-              <button id="copySmallGroupAnnouncementBtn" class="soft-btn small-btn" type="button">複製公告</button>
-            </div>
-          </div>
-
-          <div class="small-group-settings">
-            <label class="field">
-              <span>聚會星期</span>
-              <select id="smallGroupWeekday"></select>
-            </label>
-            <label class="field">
-              <span>一次排幾個月</span>
-              <select id="smallGroupMonthSpan">
-                <option value="1">1個月</option>
-                <option value="2">2個月</option>
-                <option value="3">3個月</option>
-              </select>
-            </label>
-            <label class="toggle-field">
-              <input id="smallGroupIncludeMonthTheme" type="checkbox" />
-              <span>列出本月主題</span>
-            </label>
-            <label class="toggle-field">
-              <input id="smallGroupIncludeWeekTheme" type="checkbox" />
-              <span>列出本週主題</span>
-            </label>
-            <label class="toggle-field">
-              <input id="smallGroupIncludeSpeaker" type="checkbox" />
-              <span>列出講員</span>
-            </label>
-          </div>
-        </section>
-
-        <section class="surface small-group-panel">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Workers</p>
@@ -349,16 +317,51 @@
             </label>
             <button class="primary-btn" type="submit">新增小組同工</button>
           </form>
+          <div class="small-group-permission-guide" aria-label="等級可服事項目說明">
+            <h3>等級可服事項目說明</h3>
+            <div class="permission-guide-grid">
+              <span><strong>新進</strong>破冰、點心</span>
+              <span><strong>一般</strong>破冰、點心、見證</span>
+              <span><strong>同工</strong>破冰、點心、見證、敬拜、話語</span>
+              <span><strong>領袖</strong>破冰、點心、見證、敬拜、話語</span>
+            </div>
+          </div>
           <div id="smallGroupWorkerList" class="small-group-worker-list"></div>
         </section>
 
         <section class="surface small-group-panel">
           <div class="section-heading compact">
             <div>
-              <p class="eyebrow">Meetings</p>
-              <h2>每週聚會與服事安排</h2>
+              <p class="eyebrow">Auto Schedule</p>
+              <h2>自動生成服事表</h2>
+            </div>
+            <button id="autoSmallGroupScheduleBtn" class="primary-btn small-btn" type="button">自動生成服事表</button>
+          </div>
+          <div class="small-group-settings">
+            <label class="field">
+              <span>聚會星期</span>
+              <select id="smallGroupWeekday"></select>
+            </label>
+            <label class="field">
+              <span>一次排幾個月</span>
+              <select id="smallGroupMonthSpan">
+                <option value="1">1個月</option>
+                <option value="2">2個月</option>
+                <option value="3">3個月</option>
+              </select>
+            </label>
+          </div>
+          <div id="smallGroupScheduleSummary" class="small-group-schedule-summary"></div>
+        </section>
+
+        <section class="surface small-group-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Schedule</p>
+              <h2>服事表表格</h2>
             </div>
           </div>
+          <div id="smallGroupScheduleTable" class="small-group-table-wrap"></div>
           <nav id="smallGroupMeetingTabs" class="week-tabs" aria-label="小組聚會週次"></nav>
           <div id="smallGroupMeetingEditor" class="small-group-meeting-editor"></div>
         </section>
@@ -366,10 +369,46 @@
         <section class="surface small-group-panel">
           <div class="section-heading compact">
             <div>
-              <p class="eyebrow">LINE</p>
-              <h2>公告文字</h2>
+              <p class="eyebrow">Image</p>
+              <h2>服事表圖片輸出</h2>
+            </div>
+            <div class="panel-actions">
+              <button id="exportSmallGroupImageBtn" class="soft-btn small-btn" type="button">產生圖片</button>
+              <button id="downloadSmallGroupImageBtn" class="primary-btn small-btn" type="button">下載圖片</button>
             </div>
           </div>
+          <div class="small-group-image-frame">
+            <canvas id="smallGroupScheduleCanvas" width="1400" height="420" aria-label="小組服事表圖片"></canvas>
+          </div>
+          <a id="smallGroupImageDownload" class="hidden" download="small-group-schedule.png"></a>
+        </section>
+
+        <section class="surface small-group-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">LINE</p>
+              <h2>LINE 公告</h2>
+            </div>
+            <div class="panel-actions">
+              <button id="generateSmallGroupAnnouncementBtn" class="primary-btn small-btn" type="button">生成 LINE 公告</button>
+              <button id="copySmallGroupAnnouncementBtn" class="soft-btn small-btn" type="button">複製公告</button>
+            </div>
+          </div>
+          <div class="small-group-settings">
+            <label class="toggle-field">
+              <input id="smallGroupIncludeMonthTheme" type="checkbox" />
+              <span>列出本月主題</span>
+            </label>
+            <label class="toggle-field">
+              <input id="smallGroupIncludeWeekTheme" type="checkbox" />
+              <span>列出本週主題</span>
+            </label>
+            <label class="toggle-field">
+              <input id="smallGroupIncludeSpeaker" type="checkbox" />
+              <span>列出講員</span>
+            </label>
+          </div>
+          <div id="smallGroupAnnouncementSettings" class="small-group-announcement-settings"></div>
           <textarea id="smallGroupAnnouncement" class="announcement-output" rows="14" readonly></textarea>
         </section>
       </main>
