@@ -28,6 +28,7 @@
             <span>排班月份</span>
             <input id="monthInput" type="month" />
           </label>
+          <button id="nextMonthBtn" class="soft-btn small-btn" type="button">切到下個月</button>
 
           <div class="backup-tools" aria-label="JSON 備份">
             <button id="exportJsonBtn" class="soft-btn small-btn" type="button">匯出 JSON</button>
@@ -37,16 +38,20 @@
         </div>
       </header>
 
-      <div class="mode-switch mode-switcher-fixed" aria-label="檢視模式">
-        <button id="manageModeBtn" class="mode-btn active" type="button">管理模式</button>
-        <button id="sheetModeBtn" class="mode-btn" type="button">服事表模式</button>
-      </div>
+      <div class="desktop-layout">
+        <aside id="desktopSidebar" class="desktop-sidebar surface" aria-label="事工樹狀選單"></aside>
 
-      <section id="modulePanel" class="surface module-panel"></section>
+        <div class="desktop-content">
+          <div class="mode-switch mode-switcher-fixed" aria-label="檢視模式">
+            <button id="manageModeBtn" class="mode-btn active" type="button">管理模式</button>
+            <button id="sheetModeBtn" class="mode-btn" type="button">服事表模式</button>
+          </div>
 
-      <section id="summaryPanel" class="surface summary-panel"></section>
+          <section id="modulePanel" class="surface module-panel"></section>
 
-      <main id="managementView" class="main-layout">
+          <section id="summaryPanel" class="surface summary-panel"></section>
+
+          <main id="managementView" class="main-layout">
         <aside class="roster-panel surface">
           <div class="section-heading">
             <div>
@@ -283,6 +288,16 @@
               <p class="eyebrow">Sheet</p>
               <h2 id="sheetTitle">服事表</h2>
             </div>
+            <div class="sheet-output-toolbar" aria-label="服事表輸出工具">
+              <label class="sheet-mode-toggle">
+                <input id="googleSheetModeToggle" type="checkbox" checked />
+                <span>Google Sheet 模式</span>
+              </label>
+              <button id="copyMonthSheetBtn" class="soft-btn small-btn" type="button">📋 複製整月</button>
+              <button id="exportGoogleSheetBtn" class="soft-btn small-btn" type="button">匯出 Google Sheet</button>
+              <button id="downloadExcelBtn" class="primary-btn small-btn" type="button">下載 Excel</button>
+              <button id="printSheetBtn" class="ghost-btn small-btn" type="button">列印服事表</button>
+            </div>
           </div>
           <div id="mainSheetTable" class="sheet-table-wrap"></div>
         </section>
@@ -295,6 +310,16 @@
             </div>
           </div>
           <div id="groupSheetGrid" class="group-sheet-grid"></div>
+        </section>
+
+        <section class="surface sheet-panel previous-sheet-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Reference</p>
+              <h2 id="previousSheetTitle">上月服事表參考</h2>
+            </div>
+          </div>
+          <div id="previousSheetReference" class="previous-sheet-reference"></div>
         </section>
       </main>
 
@@ -489,7 +514,9 @@
           <div id="smallGroupAnnouncementSettings" class="small-group-announcement-settings"></div>
           <textarea id="smallGroupAnnouncement" class="announcement-output" rows="14" readonly></textarea>
         </section>
-      </main>
+          </main>
+        </div>
+      </div>
     </div>
 
     <nav id="mobileBottomNav" class="mobile-bottom-nav" aria-label="手機快速導覽">
@@ -508,6 +535,19 @@
         <div class="modal-actions">
           <button id="cancelUpgradeBtn" class="ghost-btn" type="button">取消</button>
           <button id="confirmUpgradeBtn" class="primary-btn" type="button">確認升級</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="manualConflictDialog" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="manualConflictTitle">
+      <div class="modal-card manual-conflict-card">
+        <h2 id="manualConflictTitle">手動指定造成同月衝突</h2>
+        <p id="manualConflictMessage"></p>
+        <div id="manualConflictDetails" class="manual-conflict-details"></div>
+        <div class="modal-actions split-actions">
+          <button id="cancelManualConflictBtn" class="ghost-btn" type="button">取消</button>
+          <button id="clearManualConflictBtn" class="soft-btn" type="button">只保留這次，其他週清空</button>
+          <button id="reassignManualConflictBtn" class="primary-btn" type="button">自動局部重排其他週</button>
         </div>
       </div>
     </div>

@@ -50,6 +50,8 @@ const GROUPS = [
   { id: "middle", label: "中班" },
   { id: "large", label: "大班" },
 ];
+const GROUP_ASSIGNMENT_UNASSIGNED_ID = "unassigned";
+const GROUP_ASSIGNMENT_SECTION_ORDER = ["large", "middle", "small", "toddlers", GROUP_ASSIGNMENT_UNASSIGNED_ID];
 
 const LEVELS = [
   { id: "new", label: "新進", duties: ["hospitality", "tech", "groupSupport"] },
@@ -101,6 +103,14 @@ const MESSAGE_ROLE_IDS = ["messageSupport", "messageLead"];
 const IMPORTANT_ROLE_IDS = [...WORSHIP_ROLE_IDS, ...MESSAGE_ROLE_IDS, "host"];
 const OPTIONAL_MAIN_ROLE_IDS = ["tech", "worshipSupport", "messageSupport"];
 const TRAINING_SUPPORT_ROLE_IDS = ["worshipSupport", "messageSupport"];
+const SHEET_NAME_SEPARATOR = "/";
+const GOOGLE_SHEET_MAIN_OUTPUT_ROWS = [
+  { id: "hospitality", label: "招待", roleIds: ["hospitality"] },
+  { id: "tech", label: "控台", roleIds: ["tech"] },
+  { id: "worship", label: "敬拜", roleIds: ["worshipLead", "worshipSupport"] },
+  { id: "message", label: "信息", roleIds: ["messageLead", "messageSupport"] },
+  { id: "host", label: "報告", roleIds: ["host"] },
+];
 const HOSPITALITY_ROLE_ID = "hospitality";
 const HOSPITALITY_MIN = 1;
 const HOSPITALITY_TARGET = 3;
@@ -149,12 +159,13 @@ const WEEKDAY_OPTIONS = [
 const elements = {};
 var activeWorkerAlias = null;
 let state = loadState();
-let selectedMonth = getMonthKey(new Date());
+let selectedMonth = getInitialSelectedMonth(state);
 let selectedWeekId = "";
 let currentView = "manage";
 let toastTimer = null;
 let latestNotices = [];
 let expandedWorkerId = "";
+let openGroupAssignmentSections = new Set();
 let rosterSearchTerm = "";
 let rosterLevelFilter = "all";
 let rosterTypeFilter = "all";
@@ -167,6 +178,12 @@ let mobileAvailabilityOpenWorkerId = "";
 let mobileSheetOpenWeekId = "";
 let mobileSmallGroupScheduleOpenId = "";
 let mobileActiveNav = "home";
+let googleSheetMode = true;
+let desktopSidebarExpanded = {
+  toddlerSundaySchool: true,
+  smallGroupSchedule: true,
+};
+let pendingManualConflict = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   bindElements();
@@ -177,6 +194,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function bindElements() {
   elements.monthInput = document.querySelector("#monthInput");
+  elements.nextMonthBtn = document.querySelector("#nextMonthBtn");
   elements.exportJsonBtn = document.querySelector("#exportJsonBtn");
   elements.importJsonBtn = document.querySelector("#importJsonBtn");
   elements.importJsonFile = document.querySelector("#importJsonFile");
@@ -186,6 +204,7 @@ function bindElements() {
   elements.managementView = document.querySelector("#managementView");
   elements.sheetView = document.querySelector("#sheetView");
   elements.smallGroupView = document.querySelector("#smallGroupView");
+  elements.desktopSidebar = document.querySelector("#desktopSidebar");
   elements.modulePanel = document.querySelector("#modulePanel");
   elements.summaryPanel = document.querySelector("#summaryPanel");
   elements.volunteerForm = document.querySelector("#volunteerForm");
@@ -225,6 +244,12 @@ function bindElements() {
   elements.upgradeDialog = document.querySelector("#upgradeDialog");
   elements.cancelUpgradeBtn = document.querySelector("#cancelUpgradeBtn");
   elements.confirmUpgradeBtn = document.querySelector("#confirmUpgradeBtn");
+  elements.manualConflictDialog = document.querySelector("#manualConflictDialog");
+  elements.manualConflictMessage = document.querySelector("#manualConflictMessage");
+  elements.manualConflictDetails = document.querySelector("#manualConflictDetails");
+  elements.cancelManualConflictBtn = document.querySelector("#cancelManualConflictBtn");
+  elements.clearManualConflictBtn = document.querySelector("#clearManualConflictBtn");
+  elements.reassignManualConflictBtn = document.querySelector("#reassignManualConflictBtn");
   elements.weekTabs = document.querySelector("#weekTabs");
   elements.selectedWeekTitle = document.querySelector("#selectedWeekTitle");
   elements.saveStatus = document.querySelector("#saveStatus");
@@ -239,6 +264,13 @@ function bindElements() {
   elements.sheetTitle = document.querySelector("#sheetTitle");
   elements.mainSheetTable = document.querySelector("#mainSheetTable");
   elements.groupSheetGrid = document.querySelector("#groupSheetGrid");
+  elements.googleSheetModeToggle = document.querySelector("#googleSheetModeToggle");
+  elements.copyMonthSheetBtn = document.querySelector("#copyMonthSheetBtn");
+  elements.exportGoogleSheetBtn = document.querySelector("#exportGoogleSheetBtn");
+  elements.downloadExcelBtn = document.querySelector("#downloadExcelBtn");
+  elements.printSheetBtn = document.querySelector("#printSheetBtn");
+  elements.previousSheetTitle = document.querySelector("#previousSheetTitle");
+  elements.previousSheetReference = document.querySelector("#previousSheetReference");
   elements.smallGroupCategoryChips = document.querySelector("#smallGroupCategoryChips");
   elements.smallGroupChips = document.querySelector("#smallGroupChips");
   elements.smallGroupNewForm = document.querySelector("#smallGroupNewForm");
@@ -283,12 +315,14 @@ function bindElements() {
 
 function bindEvents() {
   elements.monthInput.addEventListener("change", () => {
-    selectedMonth = elements.monthInput.value || getMonthKey(new Date());
+    selectedMonth = normalizeMonthKey(elements.monthInput.value, getDefaultScheduleMonth());
+    state.selectedMonth = selectedMonth;
     selectedWeekId = pickInitialWeek(selectedMonth);
     latestNotices = [];
     render();
   });
 
+  elements.nextMonthBtn.addEventListener("click", switchToNextMonth);
   elements.exportJsonBtn.addEventListener("click", exportJsonBackup);
   elements.importJsonBtn.addEventListener("click", () => elements.importJsonFile.click());
   elements.importJsonFile.addEventListener("change", importJsonBackup);
@@ -296,6 +330,7 @@ function bindEvents() {
   elements.sheetModeBtn.addEventListener("click", () => setView("sheet"));
   elements.modulePanel.addEventListener("click", changeModule);
   elements.modulePanel.addEventListener("change", changeModuleSelection);
+  elements.desktopSidebar?.addEventListener("click", handleDesktopSidebar);
   elements.volunteerLevel.addEventListener("change", renderFormOptions);
   elements.volunteerType.addEventListener("change", renderFormOptions);
   elements.volunteerSpecialType.addEventListener("change", renderFormOptions);
@@ -320,10 +355,16 @@ function bindEvents() {
   elements.cancelUpgradeBtn.addEventListener("click", hideUpgradeDialog);
   elements.confirmUpgradeBtn.addEventListener("click", performAnnualUpgrade);
   elements.upgradeDialog.addEventListener("click", closeUpgradeDialogFromBackdrop);
+  elements.cancelManualConflictBtn.addEventListener("click", cancelManualConflict);
+  elements.clearManualConflictBtn.addEventListener("click", clearManualConflictAssignments);
+  elements.reassignManualConflictBtn.addEventListener("click", reassignManualConflictAssignments);
+  elements.manualConflictDialog.addEventListener("click", closeManualConflictFromBackdrop);
   elements.weekTabs.addEventListener("click", changeWeek);
   elements.recordsList.addEventListener("click", changeWeek);
   elements.mainAssignmentGrid.addEventListener("change", updateMainAssignment);
+  elements.mainAssignmentGrid.addEventListener("click", unlockMainAssignment);
   elements.groupAssignmentGrid.addEventListener("change", updateGroupAssignment);
+  elements.groupAssignmentGrid.addEventListener("click", toggleGroupAssignmentSection);
   elements.autoMonthBtn.addEventListener("click", autoScheduleMonth);
   elements.autoMonthAvailabilityBtn.addEventListener("click", autoScheduleMonth);
   elements.saveWeekBtn.addEventListener("click", saveCurrentWeekRecord);
@@ -361,6 +402,12 @@ function bindEvents() {
   elements.copySmallGroupAnnouncementBtn.addEventListener("click", copySmallGroupAnnouncement);
   elements.copySmallGroupSupplementalBtn.addEventListener("click", copySmallGroupSupplementalAnnouncement);
   elements.mainSheetTable.addEventListener("click", toggleMobileSheetWeek);
+  elements.sheetView.addEventListener("click", handleSheetOutputClick);
+  elements.googleSheetModeToggle.addEventListener("change", toggleGoogleSheetMode);
+  elements.copyMonthSheetBtn.addEventListener("click", copyMonthSheetOutput);
+  elements.exportGoogleSheetBtn.addEventListener("click", exportGoogleSheetOutput);
+  elements.downloadExcelBtn.addEventListener("click", downloadExcelOutput);
+  elements.printSheetBtn.addEventListener("click", printSheetOutput);
   elements.mobileBottomNav?.addEventListener("click", handleMobileBottomNav);
   document.addEventListener("click", toggleMobileAccordion);
 }
@@ -388,6 +435,7 @@ function loadState() {
 function createEmptyState() {
   return bindActiveServiceAliases({
     version: 10,
+    selectedMonth: getDefaultScheduleMonth(),
     ministries: createDefaultMinistries({}, []),
     activeMinistryId: ACTIVE_MINISTRY_ID,
     activeServiceId: ACTIVE_SERVICE_ID,
@@ -413,6 +461,7 @@ function normalizeState(saved) {
 
   return bindActiveServiceAliases({
     version: 10,
+    selectedMonth: normalizeMonthKey(saved.selectedMonth, getDefaultScheduleMonth()),
     ministries: normalizeMinistries(savedMinistries, saved.schedules, legacyVolunteers),
     activeMinistryId: saved.activeMinistryId || ACTIVE_MINISTRY_ID,
     activeServiceId: saved.activeServiceId || ACTIVE_SERVICE_ID,
@@ -1070,11 +1119,24 @@ function normalizeAssignments(assignments = {}) {
     });
   }
 
-  return { main, groups };
+  return { main, groups, manualLocks: normalizeManualLocks(assignments.manualLocks) };
+}
+
+function normalizeManualLocks(manualLocks = {}) {
+  const rawMain = manualLocks?.main && typeof manualLocks.main === "object" ? manualLocks.main : {};
+  return {
+    main: Object.entries(rawMain).reduce((locks, [key, value]) => {
+      if (value) {
+        locks[String(key)] = true;
+      }
+      return locks;
+    }, {}),
+  };
 }
 
 function saveState() {
   syncActiveServiceState();
+  state.selectedMonth = normalizeMonthKey(selectedMonth, getDefaultScheduleMonth());
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
 }
 
@@ -1115,7 +1177,7 @@ function importJsonBackup(event) {
       createManualLocalBackup("before-json-import");
       state = normalized;
       bindActiveServiceAliases(state);
-      selectedMonth = getMonthKey(new Date());
+      selectedMonth = getInitialSelectedMonth(state);
       selectedWeekId = pickInitialWeek(selectedMonth);
       selectedSmallGroupMeetingId = "";
       latestNotices = ["JSON 備份已匯入"];
@@ -1180,6 +1242,15 @@ function setView(view) {
   currentView = view;
   renderView();
   renderMobileEnhancements();
+}
+
+function switchToNextMonth() {
+  selectedMonth = getNextMonthKey(selectedMonth);
+  state.selectedMonth = selectedMonth;
+  selectedWeekId = pickInitialWeek(selectedMonth);
+  latestNotices = [];
+  render();
+  showToast(`已切換到 ${selectedMonth}`);
 }
 
 function scrollToSheetView() {
@@ -1291,7 +1362,12 @@ function renderMobileEnhancements() {
   applyMobileAccordion(document.querySelector(".future-panel"), `${keyBase}-future`, "未來功能", false);
   applyMobileAccordion(document.querySelector(".records-panel"), `${keyBase}-records`, "排班紀錄", false);
   document.querySelectorAll(".sheet-panel").forEach((panel, index) => {
-    applyMobileAccordion(panel, `${keyBase}-sheet-${index}`, index === 0 ? "服事表" : "小組老師", index === 0);
+    const label = panel.classList.contains("previous-sheet-panel")
+      ? "上月服事表參考"
+      : index === 0
+        ? "服事表"
+        : "小組老師";
+    applyMobileAccordion(panel, `${keyBase}-sheet-${index}`, label, index === 0);
   });
   renderMobileBottomNav();
 }
@@ -1418,25 +1494,224 @@ function scrollToMobilePanel(panel) {
   });
 }
 
+function renderDesktopSidebar() {
+  if (!elements.desktopSidebar) return;
+  const smallGroupMinistry = getSmallGroupMinistryState();
+  const activeGroup = syncSmallGroupServiceFromActiveGroup(smallGroupMinistry);
+  const categories = getSmallGroupCategoryList(smallGroupMinistry);
+  const groupsByCategory = categories.map((category) => ({
+    category,
+    groups: smallGroupMinistry.groups.filter((group) => group.category === category),
+  }));
+  const toddlerOpen = desktopSidebarExpanded.toddlerSundaySchool !== false;
+  const smallGroupOpen = desktopSidebarExpanded.smallGroupSchedule !== false;
+  const activeServiceId = state.activeMinistryId === ACTIVE_MINISTRY_ID ? state.activeServiceId : "";
+  const activeGroupId = state.activeMinistryId === SMALL_GROUP_MINISTRY_ID ? activeGroup?.id : "";
+  const toddlerChildren = toddlerOpen
+    ? `<div class="tree-children">
+        ${TODDLER_SERVICES.map((service) => `
+          <button class="tree-node tree-leaf ${service.id === activeServiceId ? "active" : ""}" type="button" data-sidebar-service="${service.id}">
+            <span class="tree-spacer"></span>
+            <span>${service.label}</span>
+          </button>
+        `).join("")}
+      </div>`
+    : "";
+  const smallGroupChildren = smallGroupOpen
+    ? `<div class="tree-children">
+        ${groupsByCategory.map(({ category, groups }) => {
+          const key = `smallGroupCategory:${category}`;
+          const hasActiveGroup = groups.some((group) => group.id === activeGroupId);
+          const isOpen = Object.prototype.hasOwnProperty.call(desktopSidebarExpanded, key)
+            ? desktopSidebarExpanded[key] !== false
+            : hasActiveGroup;
+          const groupItems = isOpen
+            ? `<div class="tree-children nested">
+                ${groups.length ? groups.map((group) => `
+                  <button class="tree-node tree-leaf ${group.id === activeGroupId ? "active" : ""}" type="button" data-sidebar-small-group-id="${escapeAttribute(group.id)}">
+                    <span class="tree-spacer"></span>
+                    <span>${escapeHtml(group.name)}</span>
+                  </button>
+                `).join("") : `<div class="tree-empty">尚無小組</div>`}
+              </div>`
+            : "";
+          return `
+            <div class="tree-branch ${hasActiveGroup ? "has-active" : ""}">
+              <div class="tree-row">
+                <button class="tree-arrow" type="button" data-sidebar-toggle="${escapeAttribute(key)}" aria-label="${escapeAttribute(isOpen ? "收合" : "展開")} ${escapeAttribute(category)}">${isOpen ? "▼" : "▶"}</button>
+                <button class="tree-node ${hasActiveGroup ? "active-parent" : ""}" type="button" data-sidebar-small-group-category="${escapeAttribute(category)}">${escapeHtml(category)}</button>
+              </div>
+              ${groupItems}
+            </div>
+          `;
+        }).join("")}
+      </div>`
+    : "";
+  const reservedModules = MINISTRY_MODULES
+    .filter((module) => ![ACTIVE_MINISTRY_ID, SMALL_GROUP_MINISTRY_ID, "otherMinistry"].includes(module.id))
+    .map((module) => `
+      <button class="tree-node tree-reserved" type="button" data-sidebar-reserved="${module.id}">
+        <span class="tree-spacer"></span>
+        <span>${module.label}（預留）</span>
+      </button>
+    `).join("");
+
+  elements.desktopSidebar.innerHTML = `
+    <div class="sidebar-title">
+      <strong>教會服事管理系統</strong>
+      <small>Church Ministry Manager</small>
+    </div>
+    <nav class="tree-nav" aria-label="PC 版事工導覽">
+      <div class="tree-branch ${state.activeMinistryId === ACTIVE_MINISTRY_ID ? "has-active" : ""}">
+        <div class="tree-row">
+          <button class="tree-arrow" type="button" data-sidebar-toggle="toddlerSundaySchool" aria-label="${toddlerOpen ? "收合" : "展開"}幼兒主日學">${toddlerOpen ? "▼" : "▶"}</button>
+          <button class="tree-node ${state.activeMinistryId === ACTIVE_MINISTRY_ID ? "active-parent" : ""}" type="button" data-sidebar-module="${ACTIVE_MINISTRY_ID}">幼兒主日學</button>
+        </div>
+        ${toddlerChildren}
+      </div>
+
+      <div class="tree-branch ${state.activeMinistryId === SMALL_GROUP_MINISTRY_ID ? "has-active" : ""}">
+        <div class="tree-row">
+          <button class="tree-arrow" type="button" data-sidebar-toggle="smallGroupSchedule" aria-label="${smallGroupOpen ? "收合" : "展開"}小組服事表">${smallGroupOpen ? "▼" : "▶"}</button>
+          <button class="tree-node ${state.activeMinistryId === SMALL_GROUP_MINISTRY_ID ? "active-parent" : ""}" type="button" data-sidebar-module="${SMALL_GROUP_MINISTRY_ID}">小組服事表</button>
+        </div>
+        ${smallGroupChildren}
+      </div>
+
+      <div class="tree-reserved-list">${reservedModules}</div>
+    </nav>
+    <div class="sidebar-actions">
+      <button class="soft-btn small-btn" type="button" data-sidebar-add-small-group="true">+ 新增小組</button>
+      <button class="ghost-btn small-btn" type="button" data-sidebar-edit-small-group="true">編輯目前小組</button>
+    </div>
+  `;
+}
+
+function handleDesktopSidebar(event) {
+  const toggle = event.target.closest("[data-sidebar-toggle]");
+  if (toggle) {
+    const key = toggle.dataset.sidebarToggle;
+    desktopSidebarExpanded[key] = desktopSidebarExpanded[key] === false;
+    renderDesktopSidebar();
+    return;
+  }
+
+  const serviceButton = event.target.closest("[data-sidebar-service]");
+  if (serviceButton) {
+    selectToddlerService(serviceButton.dataset.sidebarService);
+    return;
+  }
+
+  const smallGroupButton = event.target.closest("[data-sidebar-small-group-id]");
+  if (smallGroupButton) {
+    selectSmallGroupFromSidebar(smallGroupButton.dataset.sidebarSmallGroupId);
+    return;
+  }
+
+  const categoryButton = event.target.closest("[data-sidebar-small-group-category]");
+  if (categoryButton) {
+    selectSmallGroupCategoryFromSidebar(categoryButton.dataset.sidebarSmallGroupCategory);
+    return;
+  }
+
+  const moduleButton = event.target.closest("[data-sidebar-module]");
+  if (moduleButton) {
+    selectModuleFromNavigation(moduleButton.dataset.sidebarModule);
+    return;
+  }
+
+  if (event.target.closest("[data-sidebar-add-small-group]")) {
+    selectModuleFromNavigation(SMALL_GROUP_MINISTRY_ID);
+    scrollToMobilePanel(document.querySelector(".small-group-manager-panel"));
+    window.requestAnimationFrame(() => elements.smallGroupNewName?.focus());
+    return;
+  }
+
+  if (event.target.closest("[data-sidebar-edit-small-group]")) {
+    selectModuleFromNavigation(SMALL_GROUP_MINISTRY_ID);
+    scrollToMobilePanel(document.querySelector(".small-group-manager-panel"));
+    window.requestAnimationFrame(() => elements.smallGroupEditName?.focus());
+    return;
+  }
+
+  const reservedButton = event.target.closest("[data-sidebar-reserved]");
+  if (reservedButton) {
+    showToast("此事工模組目前為預留功能");
+  }
+}
+
+function selectModuleFromNavigation(moduleId) {
+  const module = MINISTRY_MODULES.find((item) => item.id === moduleId);
+  if (!module?.implemented) return;
+  syncActiveServiceState();
+  state.activeMinistryId = module.id;
+  state.activeServiceId = module.id === SMALL_GROUP_MINISTRY_ID ? SMALL_GROUP_SERVICE_ID : ACTIVE_SERVICE_ID;
+  currentView = "manage";
+  selectedSmallGroupMeetingId = "";
+  expandedWorkerId = "";
+  expandedSmallGroupWorkerId = "";
+  activeSmallGroupSwapRequest = null;
+  latestNotices = [];
+  render();
+}
+
+function selectToddlerService(serviceId) {
+  const service = TODDLER_SERVICES.find((item) => item.id === serviceId);
+  if (!service?.implemented) return;
+  syncActiveServiceState();
+  state.activeMinistryId = ACTIVE_MINISTRY_ID;
+  state.activeServiceId = service.id;
+  currentView = "manage";
+  selectedWeekId = pickInitialWeek(selectedMonth);
+  expandedWorkerId = "";
+  latestNotices = [];
+  render();
+}
+
+function selectSmallGroupFromSidebar(groupId) {
+  syncActiveServiceState();
+  const ministry = getSmallGroupMinistryState();
+  const group = getSmallGroupById(ministry, groupId);
+  if (!group) return;
+  state.activeMinistryId = SMALL_GROUP_MINISTRY_ID;
+  state.activeServiceId = SMALL_GROUP_SERVICE_ID;
+  ministry.activeGroupId = group.id;
+  smallGroupCategoryFilter = group.category || "all";
+  desktopSidebarExpanded.smallGroupSchedule = true;
+  desktopSidebarExpanded[`smallGroupCategory:${group.category}`] = true;
+  currentView = "manage";
+  selectedSmallGroupMeetingId = "";
+  expandedSmallGroupWorkerId = "";
+  activeSmallGroupSwapRequest = null;
+  latestNotices = [];
+  render();
+}
+
+function selectSmallGroupCategoryFromSidebar(category) {
+  syncActiveServiceState();
+  const ministry = getSmallGroupMinistryState();
+  const groups = ministry.groups.filter((group) => group.category === category);
+  state.activeMinistryId = SMALL_GROUP_MINISTRY_ID;
+  state.activeServiceId = SMALL_GROUP_SERVICE_ID;
+  smallGroupCategoryFilter = category || "all";
+  desktopSidebarExpanded.smallGroupSchedule = true;
+  desktopSidebarExpanded[`smallGroupCategory:${category}`] = true;
+  if (groups.length && !groups.some((group) => group.id === ministry.activeGroupId)) {
+    ministry.activeGroupId = groups[0].id;
+    selectedSmallGroupMeetingId = "";
+  }
+  expandedSmallGroupWorkerId = "";
+  activeSmallGroupSwapRequest = null;
+  latestNotices = [];
+  render();
+}
+
 function renderModulePanel() {
   const ministry = getActiveMinistryState();
   const service = getActiveServiceState();
-  const ministryChips = MINISTRY_MODULES.map((module) => `
-    <span class="module-chip ${module.id === ministry.id ? "active" : ""} ${module.implemented ? "" : "reserved"}" data-module-id="${module.id}">
-      ${module.label}${module.implemented ? "" : "（預留）"}
-    </span>
-  `).join("");
-  const serviceChips = isSmallGroupModuleActive()
-    ? `<span class="module-chip active">小組服事表</span>`
-    : TODDLER_SERVICES.map((item) => `
-      <span class="module-chip ${item.id === service.id ? "active" : ""} ${item.implemented ? "" : "reserved"}" data-service-id="${item.id}">
-        ${item.label}${item.implemented ? "" : "（預留）"}
-      </span>
-    `).join("");
   const moduleNote = isSmallGroupModuleActive()
     ? "小組服事表使用本模組同工資料庫，聚會資訊與公告資料獨立儲存。"
     : "幼兒主日學三個堂次獨立管理同工；全職同工可跨堂共用。";
-  const serviceTitle = isSmallGroupModuleActive() ? "小組服事表" : "幼兒主日學堂次";
   const ministryOptions = MINISTRY_MODULES.map((module) => `
     <option value="${module.id}" ${module.id === ministry.id ? "selected" : ""} ${module.implemented ? "" : "disabled"}>
       ${module.label}${module.implemented ? "" : "（預留）"}
@@ -1473,17 +1748,8 @@ function renderModulePanel() {
       </div>
       <span class="pill">本模組同工資料庫</span>
     </div>
-    <div class="module-grid">
-      <div>
-        <h3>事工模組</h3>
-        <div class="module-chip-list">${ministryChips}</div>
-      </div>
-      <div>
-        <h3>${serviceTitle}</h3>
-        <div class="module-chip-list">${serviceChips}</div>
-      </div>
-    </div>
   `;
+  renderDesktopSidebar();
 }
 
 function renderFormOptions() {
@@ -1880,7 +2146,10 @@ function renderMainAssignments(schedule) {
         return `
           <label class="assignment-slot">
             <span>${slotIndex + 1}</span>
-            <select data-main-role="${role.id}" data-main-slot="${slotIndex}">${renderMainAssignmentOptions(schedule, role.id, currentValue)}</select>
+            <span class="assignment-control">
+              <select data-main-role="${role.id}" data-main-slot="${slotIndex}">${renderMainAssignmentOptions(schedule, role.id, currentValue, slotIndex)}</select>
+              ${isMainAssignmentLocked(schedule, role.id, slotIndex) ? `<button class="mini-action unlock-action" type="button" data-unlock-main-role="${role.id}" data-unlock-main-slot="${slotIndex}">解除鎖定</button>` : ""}
+            </span>
           </label>
         `;
       }).join("");
@@ -1898,18 +2167,36 @@ function renderMainAssignments(schedule) {
     return `
       <label class="assignment-row">
         <span class="role-label">${role.label}</span>
-        <select data-main-role="${role.id}">${renderMainAssignmentOptions(schedule, role.id, currentValue)}</select>
+        <span class="assignment-control">
+          <select data-main-role="${role.id}">${renderMainAssignmentOptions(schedule, role.id, currentValue, 0)}</select>
+          ${isMainAssignmentLocked(schedule, role.id, 0) ? `<button class="mini-action unlock-action" type="button" data-unlock-main-role="${role.id}" data-unlock-main-slot="0">解除鎖定</button>` : ""}
+        </span>
       </label>
     `;
   }).join("");
 }
 
-function renderMainAssignmentOptions(schedule, roleId, currentValue) {
+function renderMainAssignmentOptions(schedule, roleId, currentValue, slot = 0) {
+  const candidates = state.volunteers
+    .map((worker, index) => ({
+      worker,
+      index,
+      status: getCandidateStatus(worker, roleId, selectedWeekId, {
+        type: "main",
+        schedule,
+        schedules: state.schedules,
+        slot,
+        currentValue,
+      }),
+    }))
+    .sort((a, b) => getCandidateStatusRank(a.status.status) - getCandidateStatusRank(b.status.status) || a.index - b.index);
+
   return [
     `<option value="">${getEmptyMainRoleLabel(roleId)}</option>`,
-    ...state.volunteers
-      .filter((worker) => schedule.available.includes(worker.id) && canDoWorker(worker, roleId))
-      .map((worker) => `<option value="${escapeAttribute(worker.id)}" ${worker.id === currentValue ? "selected" : ""}>${escapeHtml(getDisplayName(worker))}</option>`),
+    ...candidates.map(({ worker, status }) => {
+      const disabled = status.status === "blocked" && worker.id !== currentValue;
+      return `<option value="${escapeAttribute(worker.id)}" ${worker.id === currentValue ? "selected" : ""} ${disabled ? "disabled" : ""}>${escapeHtml(status.label)}</option>`;
+    }),
   ].join("");
 }
 
@@ -1917,7 +2204,241 @@ function getEmptyMainRoleLabel(roleId) {
   return getMainRoleEmptyLabel(roleId);
 }
 
-function renderGroupAssignments(schedule) {
+function getManualAssignmentOptionStatus(worker, roleId, weekId, schedule, currentValue = "", slot = 0) {
+  const status = getCandidateStatus(worker, roleId, weekId, {
+    type: "main",
+    schedule,
+    schedules: state.schedules,
+    slot,
+    currentValue,
+  });
+  return {
+    disabled: status.status === "blocked" && worker.id !== currentValue,
+    label: status.label,
+  };
+}
+
+function getCandidateStatus(worker, role, weekIndex, context = {}) {
+  const roleId = typeof role === "string" ? role : role?.id;
+  const name = getDisplayName(worker);
+  const blockedReason = getCandidateBlockedReason(worker, roleId, weekIndex, context);
+  if (blockedReason) {
+    return createCandidateStatus("blocked", name, blockedReason);
+  }
+
+  const warningReason = getCandidateWarningReason(worker, roleId, weekIndex, context);
+  if (warningReason) {
+    return createCandidateStatus("warning", name, warningReason);
+  }
+
+  return createCandidateStatus("good", name, "");
+}
+
+function createCandidateStatus(status, name, reason = "") {
+  const icon = status === "good" ? "🟢" : status === "warning" ? "🟡" : "🔴";
+  return {
+    status,
+    reason,
+    label: `${icon} ${name}${reason ? `（${reason}）` : ""}`,
+  };
+}
+
+function getCandidateStatusRank(status) {
+  return status === "good" ? 0 : status === "warning" ? 1 : 2;
+}
+
+function getCandidateBlockedReason(worker, roleId, weekId, context = {}) {
+  const schedule = context.schedule || ensureScheduleIn(context.schedules || state.schedules, weekId);
+  const currentValue = context.currentValue || "";
+  const slot = Number(context.slot || 0);
+  if (!worker || !roleId) return "同工資料不存在";
+  if (!schedule.available.includes(worker.id)) return "該週不能服事";
+  if (!canDoWorker(worker, roleId)) return "等級不符";
+
+  if (context.type === "group") {
+    const group = getGroup(context.groupId);
+    if (context.groupId && !canUseGroupPool(worker, context.groupId)) {
+      return worker.fixedGroup
+        ? `固定班級為${getGroup(worker.fixedGroup)?.label || worker.fixedGroup}`
+        : `不可排${group?.label || "此班級"}`;
+    }
+    return "";
+  }
+
+  if (worker.id === currentValue) {
+    return "";
+  }
+
+  const sameWeekConflict = getSameWeekMainConflict(worker.id, roleId, schedule, slot, currentValue);
+  if (sameWeekConflict) {
+    return sameWeekConflict.role.id === roleId
+      ? `已在${sameWeekConflict.role.label}中被選過`
+      : `同週已有主要職務：${sameWeekConflict.role.label}`;
+  }
+
+  return "";
+}
+
+function getCandidateWarningReason(worker, roleId, weekId, context = {}) {
+  const schedules = context.schedules || state.schedules;
+  const schedule = context.schedule || ensureScheduleIn(schedules, weekId);
+  const monthKey = weekId.slice(0, 7);
+  const slot = Number(context.slot || 0);
+  const reasons = [];
+
+  if (context.type !== "group") {
+    const monthConflict = getManualMonthConflictLabel(worker.id, roleId, weekId, slot, schedules);
+    if (monthConflict) reasons.push(monthConflict);
+    if (roleId === "tech" && countMainRoleInMonth(worker.id, "tech", monthKey, schedules, { excludeWeekId: weekId, excludeRoleId: "tech" }) > 0) {
+      reasons.push("本月已有控台");
+    }
+    const previousMonthLabel = getPreviousMonthOptionLabel(worker.id, roleId, monthKey, schedules);
+    if (previousMonthLabel) reasons.push(previousMonthLabel);
+    if (hadSameMainRolePreviousWeek(worker.id, roleId, weekId, schedules)) reasons.push("連續兩週服事");
+  } else {
+    const assignment = schedules[shiftDate(weekId, -7)]?.assignments?.groups?.[worker.id];
+    if (assignment?.role === (roleId === "groupLead" ? "lead" : "support")) {
+      reasons.push("連續兩週服事");
+    }
+  }
+
+  const stats = getMonthStats(monthKey, schedules).get(worker.id) || createEmptyWorkerStats();
+  if (stats.total >= 3) reasons.push("本月已服事次數偏多");
+  if (hasWeakDuty(worker, roleId)) reasons.push(`不擅長${getDutyLabel(roleId)}`);
+  if (Array.isArray(worker.bestDuties) && worker.bestDuties.length > 0 && !hasBestDuty(worker, roleId)) {
+    reasons.push("不是最適合事工");
+  }
+  if (context.type === "group" && schedule.assignments.groups?.[worker.id]?.classId && schedule.assignments.groups[worker.id].classId !== context.groupId) {
+    reasons.push("本週已分配到其他班級");
+  }
+
+  return unique(reasons)[0] || "";
+}
+
+function getManualMainAssignmentBasicIssue(workerId, roleId, weekId, schedules, options = {}) {
+  const worker = getWorker(workerId);
+  const schedule = ensureScheduleIn(schedules, weekId);
+  const role = getMainRole(roleId);
+  if (!worker || !role) return "同工資料不存在";
+  const blockedReason = getCandidateBlockedReason(worker, roleId, weekId, {
+    type: "main",
+    schedule,
+    schedules,
+    slot: options.slot || 0,
+    currentValue: options.currentValue || "",
+  });
+  if (blockedReason) return blockedReason;
+  return "";
+}
+
+function getSameWeekMainConflictRole(workerId, roleId, schedule, slot = 0) {
+  return getSameWeekMainConflict(workerId, roleId, schedule, slot)?.role || null;
+}
+
+function getSameWeekMainConflict(workerId, roleId, schedule, slot = 0, currentValue = "") {
+  if (workerId === currentValue) {
+    return null;
+  }
+  for (const role of MAIN_ROLES) {
+    const ids = getMainAssignmentIds(schedule, role.id);
+    const index = ids.findIndex((id, assignedIndex) => {
+      if (id !== workerId) return false;
+      return role.id !== roleId || assignedIndex !== Number(slot || 0);
+    });
+    if (index !== -1) {
+      return { role, slot: index };
+    }
+  }
+  return null;
+}
+
+function getManualMonthConflictLabel(workerId, roleId, weekId, slot = 0, schedules = state.schedules) {
+  const conflicts = getManualMainConflictCells(workerId, roleId, weekId, slot, schedules);
+  if (!conflicts.length) return "";
+  if (isWorshipRole(roleId)) return "本月已有敬拜或信息";
+  if (isMessageRole(roleId)) return "本月已有信息或敬拜";
+  if (roleId === "host") return "本月已有報告";
+  return `本月已有${getDutyLabel(roleId) || "重要服事"}`;
+}
+
+function getPreviousMonthOptionLabel(workerId, roleId, monthKey, schedules = state.schedules) {
+  const previousMonthKey = getPreviousMonthKey(monthKey);
+  if (isWorshipRole(roleId) && hasAnyMainRoleInMonth(workerId, WORSHIP_ROLE_IDS, previousMonthKey, schedules)) {
+    return `上月已有${getPreviousMonthAssignedRoleLabel(workerId, WORSHIP_ROLE_IDS, previousMonthKey, schedules) || "敬拜"}`;
+  }
+  if (isMessageRole(roleId) && hasAnyMainRoleInMonth(workerId, MESSAGE_ROLE_IDS, previousMonthKey, schedules)) {
+    return `上月已有${getPreviousMonthAssignedRoleLabel(workerId, MESSAGE_ROLE_IDS, previousMonthKey, schedules) || "信息"}`;
+  }
+  if (roleId === "host" && hadMainRoleInMonth(workerId, "host", previousMonthKey, schedules)) {
+    return "上月已有報告";
+  }
+  return "";
+}
+
+function getPreviousMonthAssignedRoleLabel(workerId, roleIds, monthKey, schedules) {
+  for (const roleId of roleIds) {
+    if (hadMainRoleInMonth(workerId, roleId, monthKey, schedules)) {
+      return getDutyLabel(roleId);
+    }
+  }
+  return "";
+}
+
+function getManualMainConflictCells(workerId, roleId, weekId, slot = 0, schedules = state.schedules) {
+  if (!isImportantRole(roleId)) {
+    return [];
+  }
+
+  const monthKey = weekId.slice(0, 7);
+  const conflictRoleIds = getManualConflictRoleIds(roleId);
+  const seen = new Set();
+  const conflicts = [];
+
+  getSundaysOfMonth(monthKey).forEach((monthWeekId) => {
+    const schedule = schedules[monthWeekId];
+    if (!schedule?.assignments) {
+      return;
+    }
+
+    conflictRoleIds.forEach((conflictRoleId) => {
+      getMainAssignmentIds(schedule, conflictRoleId).forEach((assignedWorkerId, assignedSlot) => {
+        if (assignedWorkerId !== workerId) {
+          return;
+        }
+        if (monthWeekId === weekId && conflictRoleId === roleId && assignedSlot === Number(slot || 0)) {
+          return;
+        }
+
+        const key = `${monthWeekId}:${conflictRoleId}:${assignedSlot}`;
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        conflicts.push({
+          weekId: monthWeekId,
+          roleId: conflictRoleId,
+          slot: assignedSlot,
+          workerId,
+          locked: isMainAssignmentLocked(schedule, conflictRoleId, assignedSlot),
+        });
+      });
+    });
+  });
+
+  return conflicts;
+}
+
+function getManualConflictRoleIds(roleId) {
+  if (isWorshipRole(roleId)) {
+    return unique([roleId, ...MESSAGE_ROLE_IDS]);
+  }
+  if (isMessageRole(roleId)) {
+    return unique([roleId, ...WORSHIP_ROLE_IDS]);
+  }
+  return [roleId];
+}
+
+function renderGroupAssignmentsLegacy(schedule) {
   const workers = getAvailableWorkers(schedule).filter((worker) => canDoWorker(worker, "groupSupport"));
   if (workers.length === 0) {
     elements.groupAssignmentGrid.innerHTML = `<div class="empty-state">本週沒有可分配小組的同工</div>`;
@@ -1937,7 +2458,7 @@ function renderGroupAssignments(schedule) {
             <span class="main-duty">${mainDuty ? `主要職務：${escapeHtml(mainDuty)}` : "無主要職務"}</span>
             <span class="main-duty">${escapeHtml(fixedClass)}</span>
           </div>
-          <select data-group-class="${escapeAttribute(worker.id)}">${renderWorkerGroupClassOptions(worker, assignment.classId, "待分配")}</select>
+          <select data-group-class="${escapeAttribute(worker.id)}">${renderWorkerGroupClassOptions(worker, assignment.classId, "待分配", assignment.role, schedule)}</select>
           <select data-group-role="${escapeAttribute(worker.id)}">
             <option value="support" ${assignment.role !== "lead" ? "selected" : ""}>配搭</option>
             ${canDoWorker(worker, "groupLead") ? `<option value="lead" ${assignment.role === "lead" ? "selected" : ""}>主責</option>` : ""}
@@ -1946,6 +2467,96 @@ function renderGroupAssignments(schedule) {
       `;
     })
     .join("");
+}
+
+function renderGroupAssignments(schedule) {
+  const workers = getAvailableWorkers(schedule).filter((worker) => canDoWorker(worker, "groupSupport"));
+  if (workers.length === 0) {
+    elements.groupAssignmentGrid.innerHTML = `<div class="empty-state">本週沒有可分配小組的同工</div>`;
+    return;
+  }
+
+  const sections = getGroupAssignmentSections(workers, schedule);
+  elements.groupAssignmentGrid.innerHTML = sections
+    .map((section) => {
+      const isOpen = openGroupAssignmentSections.has(section.id);
+      return `
+        <section class="group-assignment-section ${isOpen ? "open" : ""}">
+          <button class="group-assignment-summary" type="button" data-toggle-group-assignment="${escapeAttribute(section.id)}" aria-expanded="${isOpen}">
+            <span class="accordion-arrow">${isOpen ? "▼" : "▶"}</span>
+            <strong>${escapeHtml(section.title)}</strong>
+            <span class="group-assignment-count">${section.workers.length} 位老師</span>
+          </button>
+          ${isOpen ? `
+            <div class="group-assignment-section-body">
+              ${section.workers.length
+                ? section.workers.map((worker) => renderGroupAssignmentTeacherRow(worker, schedule)).join("")
+                : `<div class="empty-state compact-empty">此分類沒有可調整的老師</div>`}
+            </div>
+          ` : ""}
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function getGroupAssignmentSections(workers, schedule) {
+  const buckets = Object.fromEntries(GROUP_ASSIGNMENT_SECTION_ORDER.map((sectionId) => [sectionId, []]));
+
+  workers.forEach((worker) => {
+    const sectionId = worker.fixedGroup && getGroup(worker.fixedGroup)
+      ? worker.fixedGroup
+      : GROUP_ASSIGNMENT_UNASSIGNED_ID;
+    if (!buckets[sectionId]) {
+      buckets[sectionId] = [];
+    }
+    buckets[sectionId].push(worker);
+  });
+
+  return GROUP_ASSIGNMENT_SECTION_ORDER.map((sectionId) => {
+    const label = sectionId === GROUP_ASSIGNMENT_UNASSIGNED_ID
+      ? "未分配／無固定班級"
+      : getGroup(sectionId)?.label || sectionId;
+    const workersInSection = buckets[sectionId] || [];
+    return {
+      id: sectionId,
+      workers: workersInSection,
+      title: `${label}（${getGroupAssignmentSectionSummary(sectionId, schedule, workersInSection.length)}）`,
+    };
+  });
+}
+
+function getGroupAssignmentSectionSummary(sectionId, schedule, workerCount) {
+  if (sectionId === GROUP_ASSIGNMENT_UNASSIGNED_ID) {
+    return `${workerCount}位`;
+  }
+  return `主責 ${getGroupRoleCount(schedule, sectionId, "lead")} / 配搭 ${getGroupRoleCount(schedule, sectionId, "support")}`;
+}
+
+function renderGroupAssignmentTeacherRow(worker, schedule) {
+  const assignment = schedule.assignments.groups[worker.id] || { classId: "", role: "support" };
+  const mainDuty = getWorkerMainDuty(worker.id, schedule);
+  const fixedClass = worker.fixedGroup ? `固定班級：${getGroup(worker.fixedGroup).label}` : "無固定班級";
+  return `
+    <article class="group-teacher-row" data-group-row="${escapeAttribute(worker.id)}">
+      <div class="group-worker-meta">
+        <span class="group-worker-name">${escapeHtml(getDisplayName(worker))}</span>
+        <span class="main-duty">全名：${escapeHtml(worker.name)}</span>
+        <span class="main-duty">${mainDuty ? `主要職務：${escapeHtml(mainDuty)}` : "本週無主要職務"}</span>
+        <span class="main-duty">${escapeHtml(fixedClass)}</span>
+      </div>
+      <label class="group-assignment-field">
+        <span>本週班級</span>
+        <select data-group-class="${escapeAttribute(worker.id)}">${renderWorkerGroupClassOptions(worker, assignment.classId, "待安排", assignment.role, schedule)}</select>
+      </label>
+      <label class="group-assignment-field">
+        <span>角色</span>
+        <select data-group-role="${escapeAttribute(worker.id)}">
+          ${renderGroupRoleOptions(worker, assignment.role, assignment.classId, schedule)}
+        </select>
+      </label>
+    </article>
+  `;
 }
 
 function renderStats() {
@@ -2055,44 +2666,52 @@ function renderSummary() {
 }
 
 function renderSheetView() {
-  const weeks = getSundaysOfMonth(selectedMonth);
+  const model = createSheetOutputModel(selectedMonth, state.schedules);
+  const weeks = model.weeks;
   elements.sheetTitle.textContent = `${selectedMonth} 服事表`;
+  if (elements.googleSheetModeToggle) {
+    elements.googleSheetModeToggle.checked = googleSheetMode;
+  }
 
-  const head = weeks.map((weekId, index) => `<th>第${index + 1}週<br>${formatZhDate(weekId)}</th>`).join("");
-  const mainRows = MAIN_ROLES.map((role) => {
-    const cells = weeks
-      .map((weekId) => {
-        const workerName = getMainWorkerNames(ensureSchedule(weekId), role.id);
-        const emptyLabel = getMainRoleEmptyLabel(role.id);
-        return `<td class="${workerName ? "" : "empty-cell"}">${escapeHtml(workerName || emptyLabel)}</td>`;
-      })
-      .join("");
-    return `<tr><td>${role.label}</td>${cells}</tr>`;
+  const head = weeks.map((weekId, index) => `
+    <th>
+      <div class="sheet-week-head">
+        <span>第${index + 1}週</span>
+        <small>${formatMonthDay(weekId)}</small>
+        <button class="sheet-copy-btn" type="button" data-copy-week="${escapeAttribute(weekId)}">📋 複製本週</button>
+      </div>
+    </th>
+  `).join("");
+
+  const rows = model.rows.map((row) => {
+    const cells = weeks.map((weekId) => {
+      const value = row.values[weekId] || "";
+      return `
+        <td class="${value ? "" : "empty-cell"}">
+          <div class="sheet-cell-output">
+            <span>${escapeHtml(value)}</span>
+            <button class="sheet-copy-btn" type="button" data-copy-cell-row="${escapeAttribute(row.id)}" data-copy-cell-week="${escapeAttribute(weekId)}">📋 複製</button>
+          </div>
+        </td>
+      `;
+    }).join("");
+    return `<tr><td>${escapeHtml(row.label)}</td>${cells}</tr>`;
   }).join("");
+
   if (!mobileSheetOpenWeekId || !weeks.includes(mobileSheetOpenWeekId)) {
     mobileSheetOpenWeekId = weeks[0] || "";
   }
   const mobileSheetCards = weeks.map((weekId, index) => {
-    const schedule = ensureSchedule(weekId);
     const isOpen = mobileSheetOpenWeekId === weekId;
-    const roleLines = MAIN_ROLES.map((role) => {
-      const workerName = getMainWorkerNames(schedule, role.id);
-      const emptyLabel = getMainRoleEmptyLabel(role.id);
+    const lines = model.rows.map((row) => {
+      const value = row.values[weekId] || "";
       return `
         <div class="mobile-sheet-line">
-          <dt>${role.label}</dt>
-          <dd class="${workerName ? "" : "empty-cell"}">${escapeHtml(workerName || emptyLabel)}</dd>
-        </div>
-      `;
-    }).join("");
-    const groupLines = GROUPS.map((group) => {
-      const leadNames = getGroupWorkerNames(schedule, group.id, "lead");
-      const supportNames = getGroupWorkerNames(schedule, group.id, "support");
-      return `
-        <div class="mobile-sheet-group">
-          <strong>${group.label}</strong>
-          <span>主責：${escapeHtml(leadNames || "待安排")}</span>
-          <span>配搭：${escapeHtml(supportNames || "待安排")}</span>
+          <dt>${escapeHtml(row.label)}</dt>
+          <dd class="${value ? "" : "empty-cell"}">
+            <span>${escapeHtml(value)}</span>
+            <button class="sheet-copy-btn" type="button" data-copy-cell-row="${escapeAttribute(row.id)}" data-copy-cell-week="${escapeAttribute(weekId)}">📋 複製</button>
+          </dd>
         </div>
       `;
     }).join("");
@@ -2101,25 +2720,39 @@ function renderSheetView() {
         <button class="mobile-sheet-card-head" type="button" data-mobile-sheet-week="${weekId}" aria-expanded="${isOpen}">
           <span>${isOpen ? "▼" : "▶"}</span>
           <strong>第${index + 1}週</strong>
-          <small>${formatZhDate(weekId)}</small>
+          <small>${formatMonthDay(weekId)}</small>
         </button>
         <div class="mobile-sheet-card-body">
-          <dl class="mobile-sheet-lines">${roleLines}</dl>
-          <div class="mobile-sheet-groups">${groupLines}</div>
+          <button class="sheet-copy-btn copy-week-mobile" type="button" data-copy-week="${escapeAttribute(weekId)}">📋 複製本週</button>
+          <dl class="mobile-sheet-lines">${lines}</dl>
         </div>
       </article>
     `;
   }).join("");
 
   elements.mainSheetTable.innerHTML = `
-    <table class="sheet-table">
-      <thead><tr><th>職務</th>${head}</tr></thead>
-      <tbody>${mainRows}</tbody>
+    <table class="sheet-table google-sheet-output-table">
+      <thead><tr><th>日期</th>${head}</tr></thead>
+      <tbody>${rows}</tbody>
     </table>
     <div class="mobile-sheet-cards">${mobileSheetCards}</div>
   `;
 
-  elements.groupSheetGrid.innerHTML = GROUPS.map((group) => {
+  elements.groupSheetGrid.innerHTML = googleSheetMode
+    ? `
+      <article class="group-sheet google-sheet-note">
+        <h3>Google Sheet 模式</h3>
+        <p>小組老師已合併到上方主表，主責永遠排第一，配搭接在後面，姓名以「/」分隔。</p>
+      </article>
+    `
+    : renderClassicGroupSheet(weeks);
+
+  renderPreviousMonthSheetReference();
+}
+
+function renderClassicGroupSheet(weeks) {
+  const head = weeks.map((weekId, index) => `<th>第${index + 1}週<br>${formatMonthDay(weekId)}</th>`).join("");
+  return GROUPS.map((group) => {
     const rows = ["lead", "support"].map((role) => {
       const roleLabel = role === "lead" ? "主責" : "配搭";
       const cells = weeks
@@ -2141,6 +2774,411 @@ function renderSheetView() {
       </article>
     `;
   }).join("");
+}
+
+function createSheetOutputModel(monthKey, schedules = state.schedules) {
+  const weeks = getSundaysOfMonth(monthKey);
+  const rows = [
+    ...GOOGLE_SHEET_MAIN_OUTPUT_ROWS.map((row) => ({
+      id: row.id,
+      label: row.label,
+      values: Object.fromEntries(weeks.map((weekId) => {
+        const schedule = getReadonlySchedule(weekId, schedules);
+        return [weekId, getMainOutputNames(schedule, row.roleIds)];
+      })),
+    })),
+    ...GROUPS.map((group) => ({
+      id: `group:${group.id}`,
+      label: group.label,
+      values: Object.fromEntries(weeks.map((weekId) => {
+        const schedule = getReadonlySchedule(weekId, schedules);
+        return [weekId, getGroupOutputNames(schedule, group.id)];
+      })),
+    })),
+  ];
+
+  return { monthKey, weeks, rows };
+}
+
+function getMainOutputNames(schedule, roleIds) {
+  return unique(roleIds.flatMap((roleId) => getMainAssignmentIds(schedule, roleId)))
+    .map((workerId) => getWorkerName(workerId))
+    .filter(Boolean)
+    .join(SHEET_NAME_SEPARATOR);
+}
+
+function getGroupOutputNames(schedule, groupId) {
+  const assignments = Object.entries(schedule.assignments.groups || {})
+    .filter(([, assignment]) => assignment.classId === groupId);
+  const leadIds = assignments
+    .filter(([, assignment]) => assignment.role === "lead")
+    .map(([workerId]) => workerId);
+  const supportIds = assignments
+    .filter(([, assignment]) => assignment.role === "support")
+    .map(([workerId]) => workerId);
+  return unique([...leadIds, ...supportIds])
+    .map((workerId) => getWorkerName(workerId))
+    .filter(Boolean)
+    .join(SHEET_NAME_SEPARATOR);
+}
+
+function getSheetOutputRow(rowId, model = createSheetOutputModel(selectedMonth)) {
+  return model.rows.find((row) => row.id === rowId) || null;
+}
+
+function buildWeekOutputText(weekId, model = createSheetOutputModel(selectedMonth)) {
+  return model.rows
+    .map((row) => `${row.label}\n${row.values[weekId] || ""}`)
+    .join("\n\n");
+}
+
+function buildMonthOutputText(model = createSheetOutputModel(selectedMonth)) {
+  return model.weeks
+    .map((weekId, index) => `第${index + 1}週\n${formatMonthDay(weekId)}\n\n${buildWeekOutputText(weekId, model)}`)
+    .join("\n\n");
+}
+
+function buildGoogleSheetTsv(model = createSheetOutputModel(selectedMonth)) {
+  const header = ["日期", ...model.weeks.map((weekId) => formatMonthDay(weekId))];
+  const rows = model.rows.map((row) => [row.label, ...model.weeks.map((weekId) => row.values[weekId] || "")]);
+  return [header, ...rows].map((row) => row.map(escapeTsvCell).join("\t")).join("\n");
+}
+
+function escapeTsvCell(value) {
+  const text = String(value ?? "");
+  return /["\n\r\t]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+async function handleSheetOutputClick(event) {
+  const cellButton = event.target.closest("[data-copy-cell-row]");
+  if (cellButton) {
+    const model = createSheetOutputModel(selectedMonth);
+    const row = getSheetOutputRow(cellButton.dataset.copyCellRow, model);
+    const text = row?.values?.[cellButton.dataset.copyCellWeek] || "";
+    await copyTextToClipboard(text, text ? "已複製此格內容" : "已複製空白內容");
+    return;
+  }
+
+  const weekButton = event.target.closest("[data-copy-week]");
+  if (weekButton) {
+    await copyTextToClipboard(buildWeekOutputText(weekButton.dataset.copyWeek), "已複製本週服事表");
+  }
+}
+
+function toggleGoogleSheetMode(event) {
+  googleSheetMode = Boolean(event.target.checked);
+  renderSheetView();
+}
+
+async function copyMonthSheetOutput() {
+  await copyTextToClipboard(buildMonthOutputText(), "已複製整月服事表");
+}
+
+async function exportGoogleSheetOutput() {
+  await copyTextToClipboard(buildGoogleSheetTsv(), "已複製 Google Sheet 表格，可直接貼上");
+}
+
+function downloadExcelOutput() {
+  const model = createSheetOutputModel(selectedMonth);
+  const rows = [
+    ["日期", ...model.weeks.map((weekId) => formatMonthDay(weekId))],
+    ...model.rows.map((row) => [row.label, ...model.weeks.map((weekId) => row.values[weekId] || "")]),
+  ];
+  const blob = createXlsxBlob(rows);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `kids-sunday-school-${selectedMonth}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("已下載 Excel 檔");
+}
+
+function printSheetOutput() {
+  currentView = "sheet";
+  render();
+  window.requestAnimationFrame(() => window.print());
+}
+
+async function copyTextToClipboard(text, successMessage = "已複製") {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    showToast(successMessage);
+  } catch {
+    showToast("複製失敗，請再試一次");
+  }
+}
+
+function createXlsxBlob(rows) {
+  const files = {
+    "[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`,
+    "_rels/.rels": `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+    "xl/workbook.xml": `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="服事表" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+    "xl/_rels/workbook.xml.rels": `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`,
+    "xl/styles.xml": `<?xml version="1.0" encoding="UTF-8"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>
+  <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/></cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`,
+    "xl/worksheets/sheet1.xml": createWorksheetXml(rows),
+  };
+
+  return new Blob([createZip(files)], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+}
+
+function createWorksheetXml(rows) {
+  const sheetRows = rows.map((row, rowIndex) => {
+    const rowNumber = rowIndex + 1;
+    const cells = row.map((value, columnIndex) => {
+      const ref = `${getExcelColumnName(columnIndex + 1)}${rowNumber}`;
+      const style = rowIndex === 0 || columnIndex === 0 ? ` s="1"` : "";
+      return `<c r="${ref}" t="inlineStr"${style}><is><t>${escapeXml(value)}</t></is></c>`;
+    }).join("");
+    return `<row r="${rowNumber}">${cells}</row>`;
+  }).join("");
+
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  const columns = Array.from({ length: columnCount }, (_, index) => {
+    const width = index === 0 ? 14 : 18;
+    return `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`;
+  }).join("");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cols>${columns}</cols>
+  <sheetData>${sheetRows}</sheetData>
+</worksheet>`;
+}
+
+function getExcelColumnName(number) {
+  let name = "";
+  let current = number;
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    name = String.fromCharCode(65 + remainder) + name;
+    current = Math.floor((current - 1) / 26);
+  }
+  return name;
+}
+
+function createZip(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  Object.entries(files).forEach(([name, content]) => {
+    const nameBytes = encoder.encode(name);
+    const data = encoder.encode(content);
+    const crc = crc32(data);
+    const localHeader = createZipLocalHeader(nameBytes, data.length, crc);
+    localParts.push(localHeader, nameBytes, data);
+    centralParts.push(createZipCentralHeader(nameBytes, data.length, crc, offset), nameBytes);
+    offset += localHeader.length + nameBytes.length + data.length;
+  });
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const endRecord = createZipEndRecord(Object.keys(files).length, centralSize, offset);
+  return new Blob([...localParts, ...centralParts, endRecord]);
+}
+
+function createZipLocalHeader(nameBytes, size, crc) {
+  const header = new Uint8Array(30);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, 0x04034b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(6, 0, true);
+  view.setUint16(8, 0, true);
+  view.setUint16(10, getDosTime(), true);
+  view.setUint16(12, getDosDate(), true);
+  view.setUint32(14, crc, true);
+  view.setUint32(18, size, true);
+  view.setUint32(22, size, true);
+  view.setUint16(26, nameBytes.length, true);
+  view.setUint16(28, 0, true);
+  return header;
+}
+
+function createZipCentralHeader(nameBytes, size, crc, offset) {
+  const header = new Uint8Array(46);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, 0x02014b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(6, 20, true);
+  view.setUint16(8, 0, true);
+  view.setUint16(10, 0, true);
+  view.setUint16(12, getDosTime(), true);
+  view.setUint16(14, getDosDate(), true);
+  view.setUint32(16, crc, true);
+  view.setUint32(20, size, true);
+  view.setUint32(24, size, true);
+  view.setUint16(28, nameBytes.length, true);
+  view.setUint16(30, 0, true);
+  view.setUint16(32, 0, true);
+  view.setUint16(34, 0, true);
+  view.setUint16(36, 0, true);
+  view.setUint32(38, 0, true);
+  view.setUint32(42, offset, true);
+  return header;
+}
+
+function createZipEndRecord(fileCount, centralSize, centralOffset) {
+  const record = new Uint8Array(22);
+  const view = new DataView(record.buffer);
+  view.setUint32(0, 0x06054b50, true);
+  view.setUint16(8, fileCount, true);
+  view.setUint16(10, fileCount, true);
+  view.setUint32(12, centralSize, true);
+  view.setUint32(16, centralOffset, true);
+  return record;
+}
+
+function crc32(data) {
+  let crc = 0xffffffff;
+  for (let index = 0; index < data.length; index += 1) {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ data[index]) & 0xff];
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    }
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function getDosTime(date = new Date()) {
+  return (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+}
+
+function getDosDate(date = new Date()) {
+  return ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+function renderPreviousMonthSheetReference() {
+  if (!elements.previousSheetReference) return;
+  const previousMonthKey = getPreviousMonthKey(selectedMonth);
+  elements.previousSheetTitle.textContent = `${previousMonthKey} 上月服事表參考`;
+
+  if (!hasMonthScheduleRecord(previousMonthKey, state.schedules)) {
+    elements.previousSheetReference.innerHTML = `<div class="empty-state">尚無上月服事表紀錄</div>`;
+    return;
+  }
+
+  const weeks = getSundaysOfMonth(previousMonthKey);
+  const head = weeks.map((weekId, index) => `<th>第${index + 1}週<br>${formatZhDate(weekId)}</th>`).join("");
+  const mainRows = MAIN_ROLES.map((role) => {
+    const cells = weeks.map((weekId) => {
+      const schedule = getReadonlySchedule(weekId, state.schedules);
+      const workerName = getMainWorkerNames(schedule, role.id);
+      const emptyLabel = getMainRoleEmptyLabel(role.id);
+      return `<td class="${workerName ? "" : "empty-cell"}">${escapeHtml(workerName || emptyLabel)}</td>`;
+    }).join("");
+    return `<tr><td>${role.label}</td>${cells}</tr>`;
+  }).join("");
+  const groupSheets = GROUPS.map((group) => {
+    const rows = ["lead", "support"].map((role) => {
+      const roleLabel = role === "lead" ? "主責" : "配搭";
+      const cells = weeks.map((weekId) => {
+        const schedule = getReadonlySchedule(weekId, state.schedules);
+        const names = getGroupWorkerNames(schedule, group.id, role);
+        return `<td class="${names ? "" : "empty-cell"}">${escapeHtml(names || "待安排")}</td>`;
+      }).join("");
+      return `<tr><td>${roleLabel}</td>${cells}</tr>`;
+    }).join("");
+
+    return `
+      <article class="group-sheet previous-group-sheet">
+        <h3>${group.label}</h3>
+        <table>
+          <thead><tr><th>角色</th>${head}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </article>
+    `;
+  }).join("");
+
+  elements.previousSheetReference.innerHTML = `
+    <div class="sheet-table-wrap previous-main-sheet">
+      <table class="sheet-table">
+        <thead><tr><th>職務</th>${head}</tr></thead>
+        <tbody>${mainRows}</tbody>
+      </table>
+    </div>
+    <div class="group-sheet-grid previous-group-grid">${groupSheets}</div>
+  `;
+}
+
+function getReadonlySchedule(weekId, schedules) {
+  const saved = schedules?.[weekId];
+  return {
+    available: Array.isArray(saved?.available) ? saved.available : [],
+    assignments: normalizeAssignments(saved?.assignments),
+    savedAt: saved?.savedAt || null,
+  };
+}
+
+function hasMonthScheduleRecord(monthKey, schedules) {
+  return getSundaysOfMonth(monthKey).some((weekId) => {
+    const schedule = schedules?.[weekId];
+    if (!schedule?.assignments) {
+      return false;
+    }
+    const readable = getReadonlySchedule(weekId, schedules);
+    return getAllMainAssignmentIds(readable).length > 0 || Object.keys(readable.assignments.groups || {}).length > 0;
+  });
 }
 
 function renderSmallGroupManager() {
@@ -3954,28 +4992,234 @@ function updateMainAssignment(event) {
   const slot = Number(select.dataset.mainSlot || 0);
   const schedule = ensureSchedule(selectedWeekId);
   const previousValue = getMainAssignmentSlotValue(schedule, roleId, slot);
+  const previousLocked = isMainAssignmentLocked(schedule, roleId, slot);
 
   if (!workerId) {
     clearMainAssignmentSlot(schedule, roleId, slot);
+    clearMainAssignmentLock(schedule, roleId, slot);
     schedule.savedAt = null;
+    pendingManualConflict = null;
     latestNotices = [];
     render();
     return;
   }
 
   clearMainAssignmentSlot(schedule, roleId, slot);
-  const result = canAssignMain(workerId, roleId, selectedWeekId, state.schedules);
-  if (!result.ok) {
+  clearMainAssignmentLock(schedule, roleId, slot);
+  const basicIssue = getManualMainAssignmentBasicIssue(workerId, roleId, selectedWeekId, state.schedules, { slot, currentValue: previousValue });
+  if (basicIssue) {
     setMainAssignmentSlot(schedule, roleId, previousValue, slot);
-    latestNotices = [result.message];
+    setMainAssignmentLock(schedule, roleId, slot, previousLocked);
+    latestNotices = [basicIssue];
     render();
     return;
   }
 
   setMainAssignmentSlot(schedule, roleId, workerId, slot);
+  setMainAssignmentLock(schedule, roleId, slot, true);
   schedule.savedAt = null;
-  latestNotices = result.message ? [result.message] : [];
+  const worker = getWorker(workerId);
+  const warning = getMainAssignmentWarning(worker, roleId, selectedWeekId, state.schedules);
+  const conflicts = getManualMainConflictCells(workerId, roleId, selectedWeekId, slot, state.schedules);
+  pendingManualConflict = conflicts.length
+    ? { weekId: selectedWeekId, roleId, slot, workerId, previousValue, previousLocked, conflicts }
+    : null;
+  latestNotices = [
+    warning,
+    conflicts.length ? `${getDisplayName(worker)} 本月已有重要服事，請選擇是否局部重排。` : "",
+  ].filter(Boolean);
   render();
+  if (pendingManualConflict) {
+    showManualConflictDialog();
+  }
+}
+
+function unlockMainAssignment(event) {
+  const button = event.target.closest("[data-unlock-main-role]");
+  if (!button) {
+    return;
+  }
+
+  const schedule = ensureSchedule(selectedWeekId);
+  clearMainAssignmentLock(schedule, button.dataset.unlockMainRole, Number(button.dataset.unlockMainSlot || 0));
+  schedule.savedAt = null;
+  pendingManualConflict = null;
+  latestNotices = ["已解除這格的手動鎖定。"];
+  render();
+}
+
+function showManualConflictDialog() {
+  if (!pendingManualConflict) {
+    return;
+  }
+
+  const worker = getWorker(pendingManualConflict.workerId);
+  const role = getMainRole(pendingManualConflict.roleId);
+  elements.manualConflictMessage.textContent = `${getDisplayName(worker)} 本月已有重要服事，是否要將其他週重新分配？`;
+  elements.manualConflictDetails.innerHTML = `
+    <p>本次手動指定：${escapeHtml(formatZhDate(pendingManualConflict.weekId))} ${escapeHtml(role?.label || "")}</p>
+    <ul>
+      ${pendingManualConflict.conflicts.map((conflict) => `<li>${escapeHtml(getManualConflictLine(conflict))}</li>`).join("")}
+    </ul>
+  `;
+  elements.manualConflictDialog.classList.remove("hidden");
+}
+
+function hideManualConflictDialog() {
+  elements.manualConflictDialog.classList.add("hidden");
+}
+
+function closeManualConflictFromBackdrop(event) {
+  if (event.target === elements.manualConflictDialog) {
+    cancelManualConflict();
+  }
+}
+
+function cancelManualConflict() {
+  if (!pendingManualConflict) {
+    hideManualConflictDialog();
+    return;
+  }
+
+  const conflict = pendingManualConflict;
+  const schedule = ensureSchedule(conflict.weekId);
+  clearMainAssignmentSlot(schedule, conflict.roleId, conflict.slot);
+  clearMainAssignmentLock(schedule, conflict.roleId, conflict.slot);
+  if (conflict.previousValue) {
+    setMainAssignmentSlot(schedule, conflict.roleId, conflict.previousValue, conflict.slot);
+    setMainAssignmentLock(schedule, conflict.roleId, conflict.slot, conflict.previousLocked);
+  }
+  schedule.savedAt = null;
+  pendingManualConflict = null;
+  hideManualConflictDialog();
+  latestNotices = ["已取消這次手動指定。"];
+  render();
+}
+
+function clearManualConflictAssignments() {
+  if (!pendingManualConflict) {
+    hideManualConflictDialog();
+    return;
+  }
+
+  const conflict = pendingManualConflict;
+  const lines = [];
+  conflict.conflicts.forEach((item) => {
+    const schedule = ensureSchedule(item.weekId);
+    const oldWorkerId = getMainAssignmentSlotValue(schedule, item.roleId, item.slot);
+    if (!oldWorkerId) {
+      return;
+    }
+    clearMainAssignmentSlot(schedule, item.roleId, item.slot);
+    clearMainAssignmentLock(schedule, item.roleId, item.slot);
+    schedule.savedAt = null;
+    lines.push(`${getManualConflictCellLabel(item)}：${getWorkerName(oldWorkerId)} → 待補`);
+  });
+
+  pendingManualConflict = null;
+  hideManualConflictDialog();
+  latestNotices = [
+    `已保留這次手動指定：${getManualConflictCellLabel(conflict)}。`,
+    lines.length ? "其他衝突格已清空：" : "",
+    ...lines,
+  ].filter(Boolean);
+  render();
+  showToast("已保留指定並清空衝突格");
+}
+
+function reassignManualConflictAssignments() {
+  if (!pendingManualConflict) {
+    hideManualConflictDialog();
+    return;
+  }
+
+  const conflict = pendingManualConflict;
+  const adjusted = [];
+  const unresolved = [];
+
+  conflict.conflicts.forEach((item) => {
+    const schedule = ensureSchedule(item.weekId);
+    const oldWorkerId = getMainAssignmentSlotValue(schedule, item.roleId, item.slot);
+    if (!oldWorkerId) {
+      return;
+    }
+    if (isMainAssignmentLocked(schedule, item.roleId, item.slot)) {
+      unresolved.push(`${getManualConflictCellLabel(item)}：${getWorkerName(oldWorkerId)} 已手動鎖定，請人工確認`);
+      return;
+    }
+
+    clearMainAssignmentSlot(schedule, item.roleId, item.slot);
+    clearMainAssignmentLock(schedule, item.roleId, item.slot);
+    const replacement = findLocalMainReplacement(item, conflict);
+    schedule.savedAt = null;
+    if (replacement) {
+      setMainAssignmentSlot(schedule, item.roleId, replacement.id, item.slot);
+      adjusted.push(`${getManualConflictCellLabel(item)}：${getWorkerName(oldWorkerId)} → ${getDisplayName(replacement)}`);
+      return;
+    }
+
+    unresolved.push(`${getManualConflictCellLabel(item)}：${getWorkerName(oldWorkerId)} → ${getEmptyMainRoleLabel(item.roleId)}`);
+  });
+
+  pendingManualConflict = null;
+  hideManualConflictDialog();
+  latestNotices = [
+    `因${getWorkerName(conflict.workerId)}被手動指定到${getManualConflictCellLabel(conflict)}，已進行局部重排。`,
+    adjusted.length ? "已調整：" : "",
+    ...adjusted,
+    unresolved.length ? "無法調整：" : "",
+    ...unresolved,
+  ].filter(Boolean);
+  render();
+  showToast("已完成局部重排");
+}
+
+function findLocalMainReplacement(conflictCell, manualConflict) {
+  const schedule = ensureSchedule(conflictCell.weekId);
+  const candidates = state.volunteers.filter((worker) => {
+    if ([manualConflict.workerId, conflictCell.workerId].includes(worker.id)) {
+      return false;
+    }
+    if (!canAutoAssignDuty(worker, conflictCell.roleId)) {
+      return false;
+    }
+    if (getManualMainAssignmentBasicIssue(worker.id, conflictCell.roleId, conflictCell.weekId, state.schedules, { slot: conflictCell.slot })) {
+      return false;
+    }
+    if (getManualMainConflictCells(worker.id, conflictCell.roleId, conflictCell.weekId, conflictCell.slot, state.schedules).length) {
+      return false;
+    }
+    return schedule.available.includes(worker.id);
+  });
+
+  candidates.sort((a, b) => compareMainCandidates(a, b, conflictCell.roleId, conflictCell.weekId, state.schedules));
+  return candidates[0] || null;
+}
+
+function getManualConflictCellLabel(conflict) {
+  const role = getMainRole(conflict.roleId);
+  const slotLabel = isMultiMainRole(conflict.roleId) ? ` #${Number(conflict.slot || 0) + 1}` : "";
+  return `${formatZhDate(conflict.weekId)} ${role?.label || ""}${slotLabel}`;
+}
+
+function getManualConflictLine(conflict) {
+  const lockLabel = conflict.locked ? "（已手動鎖定）" : "";
+  return `${getManualConflictCellLabel(conflict)}：${getWorkerName(conflict.workerId)}${lockLabel}`;
+}
+
+function toggleGroupAssignmentSection(event) {
+  const button = event.target.closest("[data-toggle-group-assignment]");
+  if (!button) {
+    return;
+  }
+
+  const sectionId = button.dataset.toggleGroupAssignment;
+  if (openGroupAssignmentSections.has(sectionId)) {
+    openGroupAssignmentSections.delete(sectionId);
+  } else {
+    openGroupAssignmentSections.add(sectionId);
+  }
+  renderGroupAssignments(ensureSchedule(selectedWeekId));
 }
 
 function updateGroupAssignment(event) {
@@ -4025,7 +5269,7 @@ function autoScheduleMonth() {
 
   weeks.forEach((weekId) => {
     const schedule = ensureScheduleIn(nextSchedules, weekId);
-    schedule.assignments = createEmptyAssignments();
+    schedule.assignments = createAssignmentsPreservingManualLocks(schedule);
     schedule.available = schedule.available.filter((workerId) => Boolean(getWorker(workerId)));
     schedule.savedAt = null;
   });
@@ -4209,6 +5453,7 @@ function assignPastorReservedRoles(weeks, schedules, notices) {
 
       schedule.available = unique([...schedule.available, worker.id]);
       addMainAssignment(schedule, role.id, worker.id);
+      addMainAssignmentNoticeIfNeeded(worker, role.id, weekId, schedules, notices);
       assignedCount += 1;
     });
 
@@ -4402,8 +5647,6 @@ function getMainAssignmentIssue(workerId, roleId, weekId, schedules, options = {
   if (!worker || !role) return "找不到這位同工或職務";
   if (!schedule.available.includes(workerId)) return `${getDisplayName(worker)} 本週未勾選能服事`;
   if (options.auto ? !canAutoAssignDuty(worker, roleId) : !canDoWorker(worker, roleId)) return `${getDisplayName(worker)} 的等級或設定不能擔任「${role.label}」`;
-  if (!options.auto && worker.fixedMainRole && worker.fixedMainRole !== roleId) return `${getDisplayName(worker)} 已固定「${getMainRole(worker.fixedMainRole).label}」`;
-
   const duplicatedRole = MAIN_ROLES.find((item) => {
     const assignedIds = getMainAssignmentIds(schedule, item.id);
     if (!assignedIds.includes(workerId)) {
@@ -4442,6 +5685,10 @@ function getMainAssignmentWarning(worker, roleId, weekId, schedules) {
     if (previousHostCount > 0) {
       warnings.push(`報告司會候選人不足，${getDisplayName(worker)}本月重複擔任報告司會。`);
     }
+  }
+  const previousMonthWarning = getPreviousMonthImportantRoleWarning(worker, roleId, monthKey, schedules);
+  if (previousMonthWarning) {
+    warnings.push(previousMonthWarning);
   }
   const weakWarning = getWeakDutyWarning(worker, roleId);
   if (weakWarning) {
@@ -4504,6 +5751,28 @@ function hadWorshipInMonth(workerId, monthKey, schedules) {
     return getMainAssignmentIds(schedules[weekId], "worshipLead").includes(workerId)
       || getMainAssignmentIds(schedules[weekId], "worshipSupport").includes(workerId);
   });
+}
+
+function hasPreviousMonthImportantRoleConflict(workerId, roleId, monthKey, schedules) {
+  const previousMonthKey = getPreviousMonthKey(monthKey);
+  if (isWorshipRole(roleId)) {
+    return hasAnyMainRoleInMonth(workerId, WORSHIP_ROLE_IDS, previousMonthKey, schedules);
+  }
+  if (["messageLead", "messageSupport", "host"].includes(roleId)) {
+    return hadMainRoleInMonth(workerId, roleId, previousMonthKey, schedules);
+  }
+  return false;
+}
+
+function getPreviousMonthImportantRoleWarning(worker, roleId, monthKey, schedules) {
+  if (!worker || !isImportantRole(roleId) || !hasPreviousMonthImportantRoleConflict(worker.id, roleId, monthKey, schedules)) {
+    return "";
+  }
+  const role = getMainRole(roleId);
+  if (isWorshipRole(roleId)) {
+    return `${getDisplayName(worker)} 上月已有敬拜服事，本月再次安排敬拜，請確認。`;
+  }
+  return `${getDisplayName(worker)} 上月已有${role?.label || "重要"}服事，本月再次安排${role?.label || "重要服事"}，請確認。`;
 }
 
 function countMainRoleInMonth(workerId, roleId, monthKey, schedules, options = {}) {
@@ -4713,6 +5982,9 @@ function compareMainCandidates(a, b, roleId, weekId, schedules) {
   const previousMonthLeadDiff = firstWeekSeniorRole
     ? Number(hadMainRoleInMonth(a.id, roleId, getPreviousMonthKey(monthKey), schedules)) - Number(hadMainRoleInMonth(b.id, roleId, getPreviousMonthKey(monthKey), schedules))
     : 0;
+  const previousMonthImportantDiff = isImportantRole(roleId)
+    ? Number(hasPreviousMonthImportantRoleConflict(a.id, roleId, monthKey, schedules)) - Number(hasPreviousMonthImportantRoleConflict(b.id, roleId, monthKey, schedules))
+    : 0;
   const typeDiff = getAutoTypePriority(a, roleId) - getAutoTypePriority(b, roleId);
   const importantRoleCountDiff = isImportantRole(roleId)
     ? countMainRoleInMonth(a.id, roleId, monthKey, schedules) - countMainRoleInMonth(b.id, roleId, monthKey, schedules)
@@ -4723,7 +5995,7 @@ function compareMainCandidates(a, b, roleId, weekId, schedules) {
     ? Number(bNeedsMessageSupport) - Number(aNeedsMessageSupport)
     : Number(aNeedsMessageSupport) - Number(bNeedsMessageSupport);
   const consecutiveDiff = Number(hadSameMainRolePreviousWeek(a.id, roleId, weekId, schedules)) - Number(hadSameMainRolePreviousWeek(b.id, roleId, weekId, schedules));
-  return hostCandidateDiff || firstWeekSeniorDiff || previousMonthLeadDiff || typeDiff || bestDutyDiff || weakDutyDiff || worshipToMessageDiff || importantRoleCountDiff || consecutiveDiff || aMonth.total - bMonth.total || aMonth.main - bMonth.main || aAll.total - bAll.total || a.name.localeCompare(b.name, "zh-Hant");
+  return hostCandidateDiff || firstWeekSeniorDiff || previousMonthLeadDiff || previousMonthImportantDiff || typeDiff || bestDutyDiff || weakDutyDiff || worshipToMessageDiff || importantRoleCountDiff || consecutiveDiff || aMonth.total - bMonth.total || aMonth.main - bMonth.main || aAll.total - bAll.total || a.name.localeCompare(b.name, "zh-Hant");
 }
 
 function isFirstWeekSeniorLeadRole(roleId, weekId) {
@@ -4860,6 +6132,7 @@ function removeAssignmentsForWorker(schedule, workerId) {
     }
   });
   delete schedule.assignments.groups[workerId];
+  cleanupMainAssignmentLocks(schedule);
 }
 
 function pruneAssignmentsByAvailability(schedule) {
@@ -4873,6 +6146,7 @@ function pruneAssignmentsByAvailability(schedule) {
   Object.keys(schedule.assignments.groups).forEach((workerId) => {
     if (!schedule.available.includes(workerId)) delete schedule.assignments.groups[workerId];
   });
+  cleanupMainAssignmentLocks(schedule);
 }
 
 function ensureSchedule(weekId) {
@@ -4891,7 +6165,33 @@ function ensureScheduleIn(schedules, weekId) {
 }
 
 function createEmptyAssignments() {
-  return { main: createEmptyMainAssignments(), groups: {} };
+  return { main: createEmptyMainAssignments(), groups: {}, manualLocks: { main: {} } };
+}
+
+function createAssignmentsPreservingManualLocks(schedule) {
+  const previousAssignments = normalizeAssignments(schedule?.assignments);
+  const nextAssignments = createEmptyAssignments();
+  const wrapper = { assignments: nextAssignments };
+  const preserved = [];
+
+  Object.keys(previousAssignments.manualLocks.main || {}).forEach((key) => {
+    const { roleId, slot } = parseMainLockKey(key);
+    const workerId = getMainAssignmentSlotValue({ assignments: previousAssignments }, roleId, slot);
+    if (!workerId || !getWorker(workerId)) {
+      return;
+    }
+    preserved.push({ roleId, slot, workerId });
+  });
+
+  preserved
+    .sort((a, b) => a.roleId.localeCompare(b.roleId) || a.slot - b.slot)
+    .forEach(({ roleId, slot, workerId }) => {
+      const nextSlot = isMultiMainRole(roleId) ? getMainAssignmentIds(wrapper, roleId).length : slot;
+      setMainAssignmentSlot(wrapper, roleId, workerId, nextSlot);
+      setMainAssignmentLock(wrapper, roleId, nextSlot, true);
+    });
+
+  return nextAssignments;
 }
 
 function createEmptyMainAssignments() {
@@ -4990,6 +6290,50 @@ function getMainAssignmentSlotValue(schedule, roleId, slot = 0) {
   return getMainAssignmentIds(schedule, roleId)[Number(slot) || 0] || "";
 }
 
+function getMainLockKey(roleId, slot = 0) {
+  return `${roleId}:${Number(slot) || 0}`;
+}
+
+function parseMainLockKey(key) {
+  const [roleId, slot = "0"] = String(key).split(":");
+  return { roleId, slot: Number(slot) || 0 };
+}
+
+function isMainAssignmentLocked(schedule, roleId, slot = 0) {
+  return Boolean(schedule?.assignments?.manualLocks?.main?.[getMainLockKey(roleId, slot)]);
+}
+
+function setMainAssignmentLock(schedule, roleId, slot = 0, locked = true) {
+  if (!schedule.assignments.manualLocks) {
+    schedule.assignments.manualLocks = { main: {} };
+  }
+  if (!schedule.assignments.manualLocks.main) {
+    schedule.assignments.manualLocks.main = {};
+  }
+  const key = getMainLockKey(roleId, slot);
+  if (locked) {
+    schedule.assignments.manualLocks.main[key] = true;
+  } else {
+    delete schedule.assignments.manualLocks.main[key];
+  }
+}
+
+function clearMainAssignmentLock(schedule, roleId, slot = 0) {
+  setMainAssignmentLock(schedule, roleId, slot, false);
+}
+
+function cleanupMainAssignmentLocks(schedule) {
+  if (!schedule?.assignments?.manualLocks?.main) {
+    return;
+  }
+  Object.keys(schedule.assignments.manualLocks.main).forEach((key) => {
+    const { roleId, slot } = parseMainLockKey(key);
+    if (!getMainAssignmentSlotValue(schedule, roleId, slot)) {
+      delete schedule.assignments.manualLocks.main[key];
+    }
+  });
+}
+
 function getAvailableWorkers(schedule) {
   return state.volunteers.filter((worker) => schedule.available.includes(worker.id));
 }
@@ -5011,14 +6355,29 @@ function getGroupWorkerNames(schedule, groupId, role) {
     .filter(([, assignment]) => assignment.classId === groupId && assignment.role === role)
     .map(([workerId]) => getWorkerName(workerId))
     .filter(Boolean)
-    .join("、");
+    .join(SHEET_NAME_SEPARATOR);
 }
 
 function getMainWorkerNames(schedule, roleId) {
   return getMainAssignmentIds(schedule, roleId)
     .map((workerId) => getWorkerName(workerId))
     .filter(Boolean)
-    .join("、");
+    .join(SHEET_NAME_SEPARATOR);
+}
+
+function getDutyLabel(dutyId) {
+  const labels = {
+    hospitality: "招待事工",
+    tech: "控台事工",
+    worshipSupport: "敬拜〈配搭〉",
+    worshipLead: "敬拜〈主責〉",
+    messageSupport: "信息〈配搭〉",
+    messageLead: "信息〈主責〉",
+    host: "報告",
+    groupSupport: "小組老師〈配搭〉",
+    groupLead: "小組老師〈主責〉",
+  };
+  return labels[dutyId] || getMainRole(dutyId)?.label || GROUP_DUTIES[dutyId] || dutyId;
 }
 
 function getWorkerName(workerId) {
@@ -5161,7 +6520,7 @@ function renderGroupOptions(currentValue, emptyLabel = "請選擇") {
   ].join("");
 }
 
-function renderWorkerGroupClassOptions(worker, currentValue, emptyLabel = "請選擇") {
+function renderWorkerGroupClassOptionsLegacy(worker, currentValue, emptyLabel = "請選擇") {
   const groups = worker.fixedGroup
     ? GROUPS.filter((group) => group.id === worker.fixedGroup)
     : GROUPS;
@@ -5173,6 +6532,44 @@ function renderWorkerGroupClassOptions(worker, currentValue, emptyLabel = "請�
     ...groups.map((group) => `<option value="${group.id}" ${group.id === currentValue ? "selected" : ""}>${group.label}</option>`),
     hasInvalidCurrent ? `<option value="${currentValue}" selected disabled>${currentGroup.label}（違反固定班級）</option>` : "",
   ].join("");
+}
+
+function renderWorkerGroupClassOptions(worker, currentValue, emptyLabel = "請選擇", groupRole = "support", schedule = ensureSchedule(selectedWeekId)) {
+  const dutyId = groupRole === "lead" ? "groupLead" : "groupSupport";
+  return [
+    `<option value="">${emptyLabel}</option>`,
+    ...GROUPS.map((group) => {
+      const status = getCandidateStatus(worker, dutyId, selectedWeekId, {
+        type: "group",
+        schedule,
+        schedules: state.schedules,
+        groupId: group.id,
+        currentValue,
+      });
+      const disabled = status.status === "blocked" && group.id !== currentValue;
+      const reason = status.reason ? `（${status.reason}）` : "";
+      const icon = status.status === "good" ? "🟢" : status.status === "warning" ? "🟡" : "🔴";
+      return `<option value="${group.id}" ${group.id === currentValue ? "selected" : ""} ${disabled ? "disabled" : ""}>${icon} ${group.label}${reason}</option>`;
+    }),
+  ].join("");
+}
+
+function renderGroupRoleOptions(worker, currentRole = "support", groupId = "", schedule = ensureSchedule(selectedWeekId)) {
+  return ["support", "lead"].map((role) => {
+    const dutyId = role === "lead" ? "groupLead" : "groupSupport";
+    const roleLabel = role === "lead" ? "主責" : "配搭";
+    const status = getCandidateStatus(worker, dutyId, selectedWeekId, {
+      type: "group",
+      schedule,
+      schedules: state.schedules,
+      groupId,
+      currentValue: worker.id,
+    });
+    const disabled = status.status === "blocked" && role !== currentRole;
+    const reason = status.reason ? `（${status.reason}）` : "";
+    const icon = status.status === "good" ? "🟢" : status.status === "warning" ? "🟡" : "🔴";
+    return `<option value="${role}" ${role === currentRole ? "selected" : ""} ${disabled ? "disabled" : ""}>${icon} ${roleLabel}${reason}</option>`;
+  }).join("");
 }
 
 function getDutyLabelsForLevel(levelId) {
@@ -5414,6 +6811,27 @@ function getMonthKey(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
 }
 
+function getDefaultScheduleMonth() {
+  return getNextMonthKey(new Date());
+}
+
+function getInitialSelectedMonth(appState) {
+  return normalizeMonthKey(appState?.selectedMonth, getDefaultScheduleMonth());
+}
+
+function normalizeMonthKey(monthKey, fallback = getDefaultScheduleMonth()) {
+  return /^\d{4}-\d{2}$/.test(String(monthKey || "")) ? String(monthKey) : fallback;
+}
+
+function getNextMonthKey(value) {
+  if (value instanceof Date) {
+    return getMonthKey(new Date(value.getFullYear(), value.getMonth() + 1, 1));
+  }
+  const monthKey = normalizeMonthKey(value, getMonthKey(new Date()));
+  const [year, month] = monthKey.split("-").map(Number);
+  return getMonthKey(new Date(year, month, 1));
+}
+
 function getPreviousMonthKey(monthKey) {
   const [year, month] = monthKey.split("-").map(Number);
   return getMonthKey(new Date(year, month - 2, 1));
@@ -5426,6 +6844,11 @@ function formatDateKey(date) {
 function formatZhDate(weekId) {
   const [, month, day] = weekId.split("-").map(Number);
   return `${month}/${day}（日）`;
+}
+
+function formatMonthDay(dateKey) {
+  const [, month, day] = dateKey.split("-").map(Number);
+  return `${month}/${day}`;
 }
 
 function formatBackupTimestamp(date) {
