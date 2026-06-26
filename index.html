@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f8f1e7" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="教會服事管理" />
     <title>教會服事管理系統 | Church Ministry Manager</title>
     <link rel="stylesheet" href="style.css" />
     <script src="script.js" defer></script>
@@ -295,7 +299,60 @@
       </main>
 
       <main id="smallGroupView" class="small-group-view hidden">
-        <section class="surface small-group-panel">
+        <section class="surface small-group-panel small-group-manager-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Groups</p>
+              <h2>小組管理</h2>
+            </div>
+          </div>
+          <div class="small-group-switcher">
+            <div class="small-group-switch-row">
+              <span>分類：</span>
+              <div id="smallGroupCategoryChips" class="small-group-chip-list"></div>
+            </div>
+            <div class="small-group-switch-row">
+              <span>小組：</span>
+              <div id="smallGroupChips" class="small-group-chip-list"></div>
+            </div>
+          </div>
+          <form id="smallGroupNewForm" class="small-group-manager-form">
+            <label class="field">
+              <span>新增小組名稱</span>
+              <input id="smallGroupNewName" type="text" maxlength="24" placeholder="例如：小組一、小居小組" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>小組分類</span>
+              <input id="smallGroupNewCategory" type="text" maxlength="20" list="smallGroupCategoryOptions" placeholder="例如：實體小組" autocomplete="off" />
+            </label>
+            <button class="primary-btn" type="submit">新增小組</button>
+          </form>
+          <div class="small-group-edit-form">
+            <label class="field">
+              <span>目前小組名稱</span>
+              <input id="smallGroupEditName" type="text" maxlength="24" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>目前小組分類</span>
+              <input id="smallGroupEditCategory" type="text" maxlength="20" list="smallGroupCategoryOptions" autocomplete="off" />
+            </label>
+            <div class="small-group-manager-actions">
+              <button id="saveSmallGroupBtn" class="soft-btn" type="button">儲存小組資料</button>
+              <button id="deleteSmallGroupBtn" class="delete-btn" type="button">刪除小組</button>
+            </div>
+          </div>
+          <datalist id="smallGroupCategoryOptions">
+            <option value="實體小組"></option>
+            <option value="線上小組"></option>
+            <option value="海外小組"></option>
+            <option value="青年小組"></option>
+            <option value="家庭小組"></option>
+            <option value="門訓小組"></option>
+            <option value="其他"></option>
+          </datalist>
+        </section>
+
+        <section class="surface small-group-panel small-group-workers-panel">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Workers</p>
@@ -322,6 +379,7 @@
             <div class="permission-guide-grid">
               <span><strong>新進</strong>破冰、點心</span>
               <span><strong>一般</strong>破冰、點心、見證</span>
+              <span><strong>進階</strong>破冰、點心、見證、敬拜</span>
               <span><strong>同工</strong>破冰、點心、見證、敬拜、話語</span>
               <span><strong>領袖</strong>破冰、點心、見證、敬拜、話語</span>
             </div>
@@ -329,7 +387,7 @@
           <div id="smallGroupWorkerList" class="small-group-worker-list"></div>
         </section>
 
-        <section class="surface small-group-panel">
+        <section class="surface small-group-panel small-group-auto-panel">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Auto Schedule</p>
@@ -350,11 +408,19 @@
                 <option value="3">3個月</option>
               </select>
             </label>
+            <label class="field">
+              <span>預設聚會地點</span>
+              <input id="smallGroupDefaultLocation" type="text" maxlength="80" placeholder="例如：教會409教室" autocomplete="off" />
+            </label>
+            <label class="toggle-field">
+              <input id="smallGroupReapplyDefaultLocation" type="checkbox" />
+              <span>重新套用預設地點到所有週次</span>
+            </label>
           </div>
           <div id="smallGroupScheduleSummary" class="small-group-schedule-summary"></div>
         </section>
 
-        <section class="surface small-group-panel">
+        <section class="surface small-group-panel small-group-schedule-panel">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Schedule</p>
@@ -364,9 +430,21 @@
           <div id="smallGroupScheduleTable" class="small-group-table-wrap"></div>
           <nav id="smallGroupMeetingTabs" class="week-tabs" aria-label="小組聚會週次"></nav>
           <div id="smallGroupMeetingEditor" class="small-group-meeting-editor"></div>
+          <div id="smallGroupSwapPanel" class="small-group-swap-panel hidden"></div>
+          <div id="smallGroupChangeLog" class="small-group-change-log"></div>
+          <div class="small-group-supplemental">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Update</p>
+                <h3>LINE 補充公告</h3>
+              </div>
+              <button id="copySmallGroupSupplementalBtn" class="soft-btn small-btn" type="button">複製補充公告</button>
+            </div>
+            <textarea id="smallGroupSupplementalAnnouncement" class="announcement-output compact-output" rows="5" readonly></textarea>
+          </div>
         </section>
 
-        <section class="surface small-group-panel">
+        <section class="surface small-group-panel small-group-image-panel">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Image</p>
@@ -383,7 +461,7 @@
           <a id="smallGroupImageDownload" class="hidden" download="small-group-schedule.png"></a>
         </section>
 
-        <section class="surface small-group-panel">
+        <section class="surface small-group-panel small-group-announcement-panel">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">LINE</p>
@@ -413,6 +491,14 @@
         </section>
       </main>
     </div>
+
+    <nav id="mobileBottomNav" class="mobile-bottom-nav" aria-label="手機快速導覽">
+      <button type="button" data-mobile-nav="home"><span aria-hidden="true">🏠</span><small>首頁</small></button>
+      <button type="button" data-mobile-nav="workers"><span aria-hidden="true">👥</span><small>同工</small></button>
+      <button type="button" data-mobile-nav="schedule"><span aria-hidden="true">📅</span><small>排班</small></button>
+      <button type="button" data-mobile-nav="sheet"><span aria-hidden="true">📄</span><small>服事表</small></button>
+      <button type="button" data-mobile-nav="settings"><span aria-hidden="true">⚙</span><small>設定</small></button>
+    </nav>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <div id="upgradeDialog" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="upgradeDialogTitle">
