@@ -149,6 +149,14 @@ const SMALL_GROUP_DUTIES = [
   { id: "word", label: "話語分享" },
   { id: "snack", label: "點心" },
 ];
+const SMALL_GROUP_MEETING_MODES = [
+  { id: "normal", label: "聚會" },
+  { id: "paused", label: "停聚" },
+  { id: "joint", label: "聯合聚會" },
+  { id: "gospel", label: "福音聚會" },
+  { id: "outdoor", label: "戶外活動" },
+  { id: "other", label: "其他" },
+];
 const SMALL_GROUP_DEFAULT_CATEGORIES = ["實體小組", "線上小組", "海外小組", "青年小組", "家庭小組", "門訓小組", "其他"];
 const SMALL_GROUP_LEVEL_DUTY_RULES = {
   new: ["icebreaker", "snack"],
@@ -305,6 +313,7 @@ function bindElements() {
   elements.smallGroupIncludeMonthTheme = document.querySelector("#smallGroupIncludeMonthTheme");
   elements.smallGroupIncludeWeekTheme = document.querySelector("#smallGroupIncludeWeekTheme");
   elements.smallGroupIncludeSpeaker = document.querySelector("#smallGroupIncludeSpeaker");
+  elements.smallGroupMeetingModeManager = document.querySelector("#smallGroupMeetingModeManager");
   elements.smallGroupWorkerForm = document.querySelector("#smallGroupWorkerForm");
   elements.smallGroupWorkerName = document.querySelector("#smallGroupWorkerName");
   elements.smallGroupWorkerNickname = document.querySelector("#smallGroupWorkerNickname");
@@ -407,6 +416,9 @@ function bindEvents() {
   elements.smallGroupWorkerList.addEventListener("click", updateSmallGroupUnavailableDates);
   elements.smallGroupWorkerList.addEventListener("click", deleteSmallGroupWorker);
   elements.autoSmallGroupScheduleBtn.addEventListener("click", autoGenerateSmallGroupSchedule);
+  elements.smallGroupMeetingModeManager.addEventListener("input", updateSmallGroupMeetingMode);
+  elements.smallGroupMeetingModeManager.addEventListener("change", updateSmallGroupMeetingMode);
+  elements.smallGroupMeetingModeManager.addEventListener("click", updateSmallGroupMeetingMode);
   elements.smallGroupScheduleTable.addEventListener("click", openSmallGroupSwapPanel);
   elements.smallGroupScheduleTable.addEventListener("click", toggleMobileSmallGroupSchedule);
   elements.smallGroupMeetingTabs.addEventListener("click", changeSmallGroupMeeting);
@@ -724,6 +736,8 @@ function normalizeSmallGroupChangeLog(logs = []) {
 
 function normalizeSmallGroupMeeting(meetingId, meeting = {}) {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(meeting.date || "") ? meeting.date : meetingId;
+  const weekMode = normalizeSmallGroupMeetingMode(meeting.weekMode || meeting.mode);
+  const enabledRoles = normalizeSmallGroupEnabledRoles(meeting.enabledRoles || meeting.roles, weekMode);
   return {
     id: meetingId,
     date,
@@ -734,11 +748,38 @@ function normalizeSmallGroupMeeting(meetingId, meeting = {}) {
     monthTheme: String(meeting.monthTheme || ""),
     weekTheme: String(meeting.weekTheme || ""),
     speaker: String(meeting.speaker || ""),
+    weekMode,
+    pauseReason: String(meeting.pauseReason || meeting.pausedReason || ""),
+    activityName: String(meeting.activityName || meeting.eventName || meeting.customActivityName || ""),
+    manualAdjusted: Boolean(meeting.manualAdjusted || meeting.manuallyAdjusted || meeting.scheduleLocked),
+    enabledRoles,
     assignments: SMALL_GROUP_DUTIES.reduce((assignments, duty) => {
-      assignments[duty.id] = meeting.assignments?.[duty.id] ? String(meeting.assignments[duty.id]) : "";
+      assignments[duty.id] = enabledRoles.includes(duty.id) && meeting.assignments?.[duty.id] ? String(meeting.assignments[duty.id]) : "";
       return assignments;
     }, {}),
   };
+}
+
+function normalizeSmallGroupMeetingMode(modeValue) {
+  const value = String(modeValue || "").trim();
+  if (value === "custom") {
+    return "normal";
+  }
+  if (["stop", "stopped", "pause", "cancelled", "canceled"].includes(value)) {
+    return "paused";
+  }
+  return SMALL_GROUP_MEETING_MODES.some((mode) => mode.id === value) ? value : "normal";
+}
+
+function normalizeSmallGroupEnabledRoles(roleValues, weekMode = "normal") {
+  if (weekMode === "paused") {
+    return [];
+  }
+  const allowed = new Set(SMALL_GROUP_DUTIES.map((duty) => duty.id));
+  if (Array.isArray(roleValues)) {
+    return unique(roleValues).filter((roleId) => allowed.has(roleId));
+  }
+  return SMALL_GROUP_DUTIES.map((duty) => duty.id);
 }
 
 function createSmallGroupAnnouncementTemplate() {
@@ -3345,6 +3386,7 @@ function renderSmallGroupView() {
   renderSmallGroupManager();
   renderSmallGroupSettings(service);
   renderSmallGroupWorkers(service);
+  renderSmallGroupMeetingModeManager(service);
   renderSmallGroupScheduleSummary(service);
   renderSmallGroupScheduleTable(service);
   renderSmallGroupMeetingTabs(service);
@@ -3433,9 +3475,10 @@ function renderSmallGroupWorkers(service) {
 
 function renderSmallGroupScheduleSummary(service) {
   const meetings = getSmallGroupMeetingList(service);
-  const totalSlots = meetings.length * SMALL_GROUP_DUTIES.length;
+  const activeMeetings = meetings.filter((meeting) => !isSmallGroupMeetingPaused(meeting));
+  const totalSlots = meetings.reduce((count, meeting) => count + getSmallGroupEnabledDuties(meeting).length, 0);
   const filledSlots = meetings.reduce((count, meeting) => {
-    return count + SMALL_GROUP_DUTIES.filter((duty) => meeting.assignments?.[duty.id]).length;
+    return count + getSmallGroupEnabledDuties(meeting).filter((duty) => meeting.assignments?.[duty.id]).length;
   }, 0);
   const notices = unique([
     ...(Array.isArray(service.scheduleNotices) ? service.scheduleNotices : []),
@@ -3451,11 +3494,141 @@ function renderSmallGroupScheduleSummary(service) {
 
   elements.smallGroupScheduleSummary.innerHTML = `
     <div class="small-group-summary-grid">
-      <div class="metric"><strong>${meetings.length}</strong><span>聚會週次</span></div>
+      <div class="metric"><strong>${activeMeetings.length}/${meetings.length}</strong><span>聚會週次</span></div>
       <div class="metric"><strong>${filledSlots}</strong><span>已安排</span></div>
       <div class="metric"><strong>${Math.max(totalSlots - filledSlots, 0)}</strong><span>待安排</span></div>
     </div>
     ${noticeHtml}
+  `;
+}
+
+function renderSmallGroupMeetingModeManager(service) {
+  if (!elements.smallGroupMeetingModeManager) return;
+  const meetings = getSmallGroupMeetingList(service);
+  if (meetings.length === 0) {
+    elements.smallGroupMeetingModeManager.innerHTML = `<div class="empty-state">請先設定聚會月份與星期</div>`;
+    return;
+  }
+
+  elements.smallGroupMeetingModeManager.innerHTML = `
+    <section class="small-group-week-manager">
+      <div class="section-heading compact">
+        <div>
+          <p class="eyebrow">Weeks</p>
+          <h3>聚會週次管理</h3>
+        </div>
+        <span class="muted-note">停聚週會跳過；其他活動週保留在服事表中，並依啟用職務排班。</span>
+      </div>
+      <div class="small-group-week-list">
+        ${meetings.map((meeting, index) => renderSmallGroupMeetingModeCard(meeting, index)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSmallGroupMeetingModeCard(meeting, index) {
+  const mode = normalizeSmallGroupMeetingMode(meeting.weekMode);
+  const enabledIds = new Set(getSmallGroupEnabledDutyIds(meeting));
+  const modeOptions = SMALL_GROUP_MEETING_MODES.map((item) => `<option value="${item.id}" ${mode === item.id ? "selected" : ""}>${item.label}</option>`).join("");
+  const roleOptions = SMALL_GROUP_DUTIES.map((duty) => `
+    <label class="checkbox-line">
+      <input type="checkbox" data-small-group-week-role="${escapeAttribute(meeting.id)}" data-duty-id="${escapeAttribute(duty.id)}" ${enabledIds.has(duty.id) ? "checked" : ""} />
+      <span>${duty.label}</span>
+    </label>
+  `).join("");
+  const activityVisible = isSmallGroupActivityMeeting(meeting);
+  const manualNotice = meeting.manualAdjusted
+    ? `<div class="small-group-manual-note">
+        <span>本週已有手動調整，自動排班會保留。</span>
+        <button class="mini-action" type="button" data-small-group-clear-manual="${escapeAttribute(meeting.id)}">重新納入自動排班</button>
+      </div>`
+    : "";
+
+  return `
+    <article class="small-group-week-card ${mode} ${meeting.manualAdjusted ? "manual-adjusted" : ""}">
+      <div class="small-group-week-card-head">
+        <strong>第${index + 1}週 ${escapeHtml(formatSmallGroupDateShort(meeting.date))}</strong>
+        <span>${escapeHtml(getSmallGroupMeetingModeLabel(meeting))}</span>
+      </div>
+      <label class="field small-group-week-status">
+        <span>聚會狀態</span>
+        <select data-small-group-week-mode="${escapeAttribute(meeting.id)}">${modeOptions}</select>
+      </label>
+      <label class="field small-group-activity-name ${activityVisible ? "" : "hidden"}">
+        <span>活動名稱</span>
+        <input type="text" maxlength="40" placeholder="例如：全教會聯合聚會" value="${escapeAttribute(meeting.activityName || "")}" data-small-group-activity-name="${escapeAttribute(meeting.id)}" />
+      </label>
+      <label class="field small-group-pause-reason ${mode === "paused" ? "" : "hidden"}">
+        <span>停聚原因</span>
+        <input type="text" maxlength="40" placeholder="例如：夏令營、聯合聚會、颱風" value="${escapeAttribute(meeting.pauseReason || "")}" data-small-group-pause-reason="${escapeAttribute(meeting.id)}" />
+      </label>
+      <fieldset class="small-group-custom-roles ${mode === "paused" ? "hidden" : ""}">
+        <legend>本週需要排班的服事項目</legend>
+        <div class="best-duty-options compact-options">${roleOptions}</div>
+      </fieldset>
+      ${manualNotice}
+    </article>
+  `;
+}
+
+function isSmallGroupMeetingPaused(meeting) {
+  return normalizeSmallGroupMeetingMode(meeting?.weekMode) === "paused";
+}
+
+function getSmallGroupMeetingModeConfig(modeValue) {
+  const modeId = normalizeSmallGroupMeetingMode(modeValue);
+  return SMALL_GROUP_MEETING_MODES.find((mode) => mode.id === modeId) || SMALL_GROUP_MEETING_MODES[0];
+}
+
+function isSmallGroupActivityMeeting(meeting) {
+  const mode = normalizeSmallGroupMeetingMode(meeting?.weekMode);
+  return !["normal", "paused"].includes(mode);
+}
+
+function getSmallGroupActivityName(meeting) {
+  if (!isSmallGroupActivityMeeting(meeting)) {
+    return "";
+  }
+  const customName = String(meeting?.activityName || "").trim();
+  return customName || getSmallGroupMeetingModeConfig(meeting?.weekMode).label;
+}
+
+function getSmallGroupEnabledDutyIds(meeting) {
+  return normalizeSmallGroupEnabledRoles(meeting?.enabledRoles, normalizeSmallGroupMeetingMode(meeting?.weekMode));
+}
+
+function getSmallGroupEnabledDuties(meeting) {
+  const enabledIds = new Set(getSmallGroupEnabledDutyIds(meeting));
+  return SMALL_GROUP_DUTIES.filter((duty) => enabledIds.has(duty.id));
+}
+
+function isSmallGroupDutyEnabled(meeting, dutyId) {
+  return getSmallGroupEnabledDutyIds(meeting).includes(dutyId);
+}
+
+function clearSmallGroupDisabledAssignments(meeting) {
+  const enabledIds = new Set(getSmallGroupEnabledDutyIds(meeting));
+  SMALL_GROUP_DUTIES.forEach((duty) => {
+    if (!enabledIds.has(duty.id)) {
+      meeting.assignments[duty.id] = "";
+    }
+  });
+}
+
+function getSmallGroupMeetingModeLabel(meeting) {
+  if (isSmallGroupMeetingPaused(meeting)) {
+    return "停聚";
+  }
+  return getSmallGroupActivityName(meeting) || "聚會";
+}
+
+function renderSmallGroupMeetingDateCell(meeting) {
+  const activityName = getSmallGroupActivityName(meeting);
+  return `
+    <div class="small-group-date-cell">
+      <strong>${escapeHtml(formatSmallGroupDateShort(meeting.date))}</strong>
+      ${activityName ? `<span>${escapeHtml(activityName)}</span>` : ""}
+    </div>
   `;
 }
 
@@ -3468,20 +3641,26 @@ function renderSmallGroupScheduleTable(service) {
 
   const dutyHeaders = SMALL_GROUP_DUTIES.map((duty) => `<th>${duty.label}</th>`).join("");
   const rows = meetings.map((meeting) => {
-    const assignments = SMALL_GROUP_DUTIES.map((duty) => {
+    const assignments = isSmallGroupMeetingPaused(meeting)
+      ? `<td colspan="${SMALL_GROUP_DUTIES.length}" class="small-group-paused-cell">
+          <strong>本週停聚</strong>
+          ${meeting.pauseReason ? `<span>原因：${escapeHtml(meeting.pauseReason)}</span>` : ""}
+        </td>`
+      : SMALL_GROUP_DUTIES.map((duty) => {
       const workerName = getSmallGroupAssignmentName(meeting.assignments?.[duty.id]);
+      const enabled = isSmallGroupDutyEnabled(meeting, duty.id);
       return `
-        <td class="${workerName ? "" : "empty-cell"}">
+        <td class="${workerName || !enabled ? "" : "empty-cell"}">
           <div class="small-group-duty-cell">
-            <span>${escapeHtml(workerName || "待安排")}</span>
-            <button class="mini-action" type="button" data-small-group-swap-meeting="${escapeAttribute(meeting.id)}" data-small-group-swap-duty="${escapeAttribute(duty.id)}">換人</button>
+            <span>${escapeHtml(enabled ? workerName || "待安排" : "不排")}</span>
+            ${enabled ? `<button class="mini-action" type="button" data-small-group-swap-meeting="${escapeAttribute(meeting.id)}" data-small-group-swap-duty="${escapeAttribute(duty.id)}">換人</button>` : ""}
           </div>
         </td>
       `;
     }).join("");
     return `
       <tr>
-        <td>${escapeHtml(formatSmallGroupDateShort(meeting.date))}</td>
+        <td>${renderSmallGroupMeetingDateCell(meeting)}</td>
         <td>${escapeHtml(meeting.location || "待填寫")}</td>
         <td>${escapeHtml(formatAnnouncementTimeRange(meeting.startTime, meeting.endTime))}</td>
         ${assignments}
@@ -3493,14 +3672,20 @@ function renderSmallGroupScheduleTable(service) {
   }
   const mobileCards = meetings.map((meeting, index) => {
     const isOpen = mobileSmallGroupScheduleOpenId === meeting.id;
-    const dutyLines = SMALL_GROUP_DUTIES.map((duty) => {
+    const dutyLines = isSmallGroupMeetingPaused(meeting)
+      ? `<div class="mobile-meeting-meta paused">
+          <strong>本週停聚</strong>
+          ${meeting.pauseReason ? `<span>原因：${escapeHtml(meeting.pauseReason)}</span>` : ""}
+        </div>`
+      : SMALL_GROUP_DUTIES.map((duty) => {
       const workerName = getSmallGroupAssignmentName(meeting.assignments?.[duty.id]);
+      const enabled = isSmallGroupDutyEnabled(meeting, duty.id);
       return `
         <div class="mobile-sheet-line">
           <dt>${duty.label}</dt>
-          <dd class="${workerName ? "" : "empty-cell"}">
-            <span>${escapeHtml(workerName || "待安排")}</span>
-            <button class="mini-action" type="button" data-small-group-swap-meeting="${escapeAttribute(meeting.id)}" data-small-group-swap-duty="${escapeAttribute(duty.id)}">換人</button>
+          <dd class="${workerName || !enabled ? "" : "empty-cell"}">
+            <span>${escapeHtml(enabled ? workerName || "待安排" : "不排")}</span>
+            ${enabled ? `<button class="mini-action" type="button" data-small-group-swap-meeting="${escapeAttribute(meeting.id)}" data-small-group-swap-duty="${escapeAttribute(duty.id)}">換人</button>` : ""}
           </dd>
         </div>
       `;
@@ -3511,6 +3696,7 @@ function renderSmallGroupScheduleTable(service) {
           <span>${isOpen ? "▼" : "▶"}</span>
           <strong>第${index + 1}週</strong>
           <small>${escapeHtml(formatSmallGroupDateShort(meeting.date))}</small>
+          ${getSmallGroupActivityName(meeting) ? `<small class="small-group-activity-chip">${escapeHtml(getSmallGroupActivityName(meeting))}</small>` : ""}
         </button>
         <div class="mobile-sheet-card-body">
           <div class="mobile-meeting-meta">
@@ -3541,7 +3727,10 @@ function renderSmallGroupScheduleTable(service) {
 
 function getSmallGroupUnavailableConflicts(service) {
   return getSmallGroupMeetingList(service).flatMap((meeting) => {
-    return SMALL_GROUP_DUTIES.flatMap((duty) => {
+    if (isSmallGroupMeetingPaused(meeting)) {
+      return [];
+    }
+    return getSmallGroupEnabledDuties(meeting).flatMap((duty) => {
       const worker = getWorker(meeting.assignments?.[duty.id]);
       if (!worker || !isSmallGroupWorkerUnavailableOnDate(worker, meeting.date)) {
         return [];
@@ -3553,7 +3742,10 @@ function getSmallGroupUnavailableConflicts(service) {
 
 function getSmallGroupQualificationConflicts(service) {
   return getSmallGroupMeetingList(service).flatMap((meeting) => {
-    return SMALL_GROUP_DUTIES.flatMap((duty) => {
+    if (isSmallGroupMeetingPaused(meeting)) {
+      return [];
+    }
+    return getSmallGroupEnabledDuties(meeting).flatMap((duty) => {
       const worker = getWorker(meeting.assignments?.[duty.id]);
       if (!worker) {
         return [];
@@ -3576,9 +3768,9 @@ function renderSmallGroupMeetingTabs(service) {
   }
 
   elements.smallGroupMeetingTabs.innerHTML = meetings.map((meeting, index) => `
-    <button class="week-tab ${meeting.id === selectedSmallGroupMeetingId ? "active" : ""}" type="button" data-small-group-meeting-id="${escapeAttribute(meeting.id)}">
+    <button class="week-tab ${meeting.id === selectedSmallGroupMeetingId ? "active" : ""} ${normalizeSmallGroupMeetingMode(meeting.weekMode)}" type="button" data-small-group-meeting-id="${escapeAttribute(meeting.id)}">
       <strong>第 ${index + 1} 週</strong>
-      <span>${formatSmallGroupDate(meeting.date)}</span>
+      <span>${formatSmallGroupDate(meeting.date)}｜${escapeHtml(getSmallGroupMeetingModeLabel(meeting))}</span>
     </button>
   `).join("");
 }
@@ -3590,7 +3782,12 @@ function renderSmallGroupMeetingEditor(service) {
     return;
   }
 
-  const dutyRows = SMALL_GROUP_DUTIES.map((duty) => `
+  const enabledDuties = getSmallGroupEnabledDuties(meeting);
+  const dutyRows = isSmallGroupMeetingPaused(meeting)
+    ? `<div class="empty-state compact-empty">本週停聚${meeting.pauseReason ? `：${escapeHtml(meeting.pauseReason)}` : ""}</div>`
+    : enabledDuties.length === 0
+      ? `<div class="empty-state compact-empty">本週沒有啟用的服事項目</div>`
+      : enabledDuties.map((duty) => `
     <div class="assignment-row">
       <span class="role-label">${duty.label}</span>
       <span class="small-group-assignment-control">
@@ -3621,6 +3818,10 @@ function renderSmallGroupMeetingEditor(service) {
         <span>聚會地點</span>
         <input type="text" value="${escapeAttribute(meeting.location)}" data-small-group-field="location" />
       </label>
+      <div class="small-group-meeting-mode-note">
+        <strong>${escapeHtml(getSmallGroupMeetingModeLabel(meeting))}</strong>
+        <span>${isSmallGroupMeetingPaused(meeting) ? escapeHtml(meeting.pauseReason ? `原因：${meeting.pauseReason}` : "本週不安排服事") : `啟用職務：${getSmallGroupEnabledDuties(meeting).map((duty) => duty.label).join("、") || "無"}`}</span>
+      </div>
     </div>
     <div class="schedule-block">
       <div class="block-title">
@@ -3641,7 +3842,7 @@ function renderSmallGroupSwapPanel(service) {
 
   const meeting = service.meetings[activeSmallGroupSwapRequest.meetingId];
   const duty = getSmallGroupDuty(activeSmallGroupSwapRequest.dutyId);
-  if (!meeting || !duty) {
+  if (!meeting || !duty || isSmallGroupMeetingPaused(meeting) || !isSmallGroupDutyEnabled(meeting, duty.id)) {
     activeSmallGroupSwapRequest = null;
     elements.smallGroupSwapPanel.classList.add("hidden");
     elements.smallGroupSwapPanel.innerHTML = "";
@@ -3845,24 +4046,27 @@ function getSmallGroupSwapReason(worker, service, meeting, duty, score) {
 }
 
 function getSmallGroupWorkerDutyIdsInMeeting(meeting, workerId) {
-  return SMALL_GROUP_DUTIES
+  return getSmallGroupEnabledDuties(meeting)
     .filter((duty) => meeting.assignments?.[duty.id] === workerId)
     .map((duty) => duty.id);
 }
 
 function countSmallGroupWorkerAssignments(service, workerId) {
   return getSmallGroupMeetingList(service).reduce((count, meeting) => {
-    return count + SMALL_GROUP_DUTIES.filter((duty) => meeting.assignments?.[duty.id] === workerId).length;
+    if (isSmallGroupMeetingPaused(meeting)) {
+      return count;
+    }
+    return count + getSmallGroupEnabledDuties(meeting).filter((duty) => meeting.assignments?.[duty.id] === workerId).length;
   }, 0);
 }
 
 function hasSmallGroupNeighborAssignment(service, meetingId, workerId, dutyId = "") {
-  const meetings = getSmallGroupMeetingList(service);
+  const meetings = getSmallGroupMeetingList(service).filter((meeting) => !isSmallGroupMeetingPaused(meeting));
   const index = meetings.findIndex((meeting) => meeting.id === meetingId);
   if (index < 0) return false;
   return [meetings[index - 1], meetings[index + 1]].filter(Boolean).some((meeting) => {
     if (dutyId && meeting.assignments?.[dutyId] === workerId) return true;
-    return SMALL_GROUP_DUTIES.some((duty) => meeting.assignments?.[duty.id] === workerId);
+    return getSmallGroupEnabledDuties(meeting).some((duty) => meeting.assignments?.[duty.id] === workerId);
   });
 }
 
@@ -4045,6 +4249,7 @@ function applySmallGroupSwapChoice(event) {
   const changes = [];
   if (mode === "replace") {
     meeting.assignments[duty.id] = worker.id;
+    meeting.manualAdjusted = true;
     changes.push(recordSmallGroupChange(service, meeting, duty, fromWorker, worker, reason, mode));
   }
 
@@ -4054,6 +4259,7 @@ function applySmallGroupSwapChoice(event) {
     const otherFromWorker = getWorker(meeting.assignments?.[otherDuty.id]);
     meeting.assignments[duty.id] = worker.id;
     meeting.assignments[otherDuty.id] = fromWorker.id;
+    meeting.manualAdjusted = true;
     changes.push(recordSmallGroupChange(service, meeting, duty, fromWorker, worker, reason, mode));
     changes.push(recordSmallGroupChange(service, meeting, otherDuty, otherFromWorker, fromWorker, "同日交換補位", mode));
   }
@@ -4065,6 +4271,8 @@ function applySmallGroupSwapChoice(event) {
     const otherFromWorker = getWorker(otherMeeting.assignments?.[otherDuty.id]);
     meeting.assignments[duty.id] = worker.id;
     otherMeeting.assignments[otherDuty.id] = fromWorker.id;
+    meeting.manualAdjusted = true;
+    otherMeeting.manualAdjusted = true;
     changes.push(recordSmallGroupChange(service, meeting, duty, fromWorker, worker, reason, mode));
     changes.push(recordSmallGroupChange(service, otherMeeting, otherDuty, otherFromWorker, fromWorker, "跨週交換補位", mode));
   }
@@ -4247,6 +4455,8 @@ function autoGenerateSmallGroupSchedule() {
   ensureSmallGroupMeetings(service);
   const meetings = getSmallGroupMeetingList(service);
   applySmallGroupDefaultLocation(service, meetings, elements.smallGroupReapplyDefaultLocation.checked);
+  meetings.forEach((meeting) => clearSmallGroupDisabledAssignments(meeting));
+  const schedulableMeetings = meetings.filter((meeting) => !isSmallGroupMeetingPaused(meeting) && getSmallGroupEnabledDuties(meeting).length > 0);
   const workers = state.volunteers.map((worker) => normalizeSmallGroupWorker(worker));
 
   if (workers.length === 0) {
@@ -4261,11 +4471,24 @@ function autoGenerateSmallGroupSchedule() {
   const dutyCounts = new Map();
   let previousMeeting = null;
 
-  meetings.forEach((meeting) => {
+  schedulableMeetings.forEach((meeting) => {
     const previousWorkerIds = new Set(previousMeeting ? Object.values(previousMeeting.assignments || {}).filter(Boolean) : []);
     const usedThisMeeting = new Set();
+    const enabledDuties = getSmallGroupEnabledDuties(meeting);
 
-    SMALL_GROUP_DUTIES.forEach((duty) => {
+    if (meeting.manualAdjusted) {
+      enabledDuties.forEach((duty) => {
+        const workerId = meeting.assignments?.[duty.id] || "";
+        if (!workerId) return;
+        const dutyKey = `${workerId}:${duty.id}`;
+        totalCounts.set(workerId, (totalCounts.get(workerId) || 0) + 1);
+        dutyCounts.set(dutyKey, (dutyCounts.get(dutyKey) || 0) + 1);
+      });
+      previousMeeting = meeting;
+      return;
+    }
+
+    enabledDuties.forEach((duty) => {
       const selectedWorker = pickSmallGroupWorkerForDuty(duty.id, workers, {
         totalCounts,
         dutyCounts,
@@ -4393,6 +4616,81 @@ function changeSmallGroupMeeting(event) {
   render();
 }
 
+function updateSmallGroupMeetingMode(event) {
+  const target = event.target;
+  const clearManualButton = target.closest("[data-small-group-clear-manual]");
+  const meetingId = clearManualButton?.dataset.smallGroupClearManual
+    || target.dataset.smallGroupWeekMode
+    || target.dataset.smallGroupActivityName
+    || target.dataset.smallGroupPauseReason
+    || target.dataset.smallGroupWeekRole;
+  if (!meetingId) return;
+
+  const service = getSmallGroupServiceState();
+  const meeting = service.meetings[meetingId];
+  if (!meeting) return;
+
+  if (clearManualButton) {
+    meeting.manualAdjusted = false;
+  }
+
+  if (target.dataset.smallGroupWeekMode) {
+    meeting.weekMode = normalizeSmallGroupMeetingMode(target.value);
+    meeting.manualAdjusted = false;
+    meeting.enabledRoles = meeting.weekMode === "paused"
+      ? []
+      : normalizeSmallGroupEnabledRoles(meeting.enabledRoles, meeting.weekMode);
+    if (!isSmallGroupMeetingPaused(meeting) && meeting.enabledRoles.length === 0) {
+      meeting.enabledRoles = SMALL_GROUP_DUTIES.map((duty) => duty.id);
+    }
+    if (!isSmallGroupActivityMeeting(meeting)) {
+      meeting.activityName = "";
+    }
+    clearSmallGroupDisabledAssignments(meeting);
+  }
+
+  if (target.dataset.smallGroupActivityName) {
+    meeting.activityName = target.value;
+  }
+
+  if (target.dataset.smallGroupPauseReason) {
+    meeting.pauseReason = target.value;
+  }
+
+  if (target.dataset.smallGroupWeekRole) {
+    const dutyId = target.dataset.dutyId;
+    const currentRoles = new Set(Array.isArray(meeting.enabledRoles) ? meeting.enabledRoles : getSmallGroupEnabledDutyIds(meeting));
+    if (target.checked) {
+      currentRoles.add(dutyId);
+    } else {
+      currentRoles.delete(dutyId);
+      meeting.assignments[dutyId] = "";
+    }
+    meeting.enabledRoles = SMALL_GROUP_DUTIES.map((duty) => duty.id).filter((id) => currentRoles.has(id));
+    clearSmallGroupDisabledAssignments(meeting);
+  }
+
+  service.scheduleNotices = [];
+  if (target.dataset.smallGroupPauseReason || target.dataset.smallGroupActivityName) {
+    if (event.type === "change") {
+      renderSmallGroupMeetingModeManager(service);
+      renderSmallGroupScheduleSummary(service);
+    }
+    renderSmallGroupScheduleTable(service);
+    renderSmallGroupMeetingTabs(service);
+    renderSmallGroupMeetingEditor(service);
+    renderSmallGroupScheduleImage(service);
+  } else {
+    renderSmallGroupMeetingModeManager(service);
+    renderSmallGroupScheduleSummary(service);
+    renderSmallGroupScheduleTable(service);
+    renderSmallGroupMeetingTabs(service);
+    renderSmallGroupMeetingEditor(service);
+    renderSmallGroupScheduleImage(service);
+  }
+  saveState();
+}
+
 function updateSmallGroupMeeting(event) {
   const service = getSmallGroupServiceState();
   const meeting = service.meetings[selectedSmallGroupMeetingId];
@@ -4406,6 +4704,11 @@ function updateSmallGroupMeeting(event) {
     }
   }
   if (dutyId) {
+    if (!isSmallGroupDutyEnabled(meeting, dutyId)) {
+      meeting.assignments[dutyId] = "";
+      renderSmallGroupMeetingEditor(service);
+      return;
+    }
     const worker = getWorker(event.target.value);
     const issue = event.target.value ? getSmallGroupCandidateIssue(worker, dutyId, meeting.date, service) : "";
     if (issue) {
@@ -4414,8 +4717,10 @@ function updateSmallGroupMeeting(event) {
       return;
     }
     meeting.assignments[dutyId] = event.target.value;
+    meeting.manualAdjusted = true;
     service.scheduleNotices = [];
   }
+  renderSmallGroupMeetingModeManager(service);
   renderSmallGroupScheduleSummary(service);
   renderSmallGroupScheduleTable(service);
   renderSmallGroupScheduleImage(service);
@@ -4467,7 +4772,21 @@ async function copySmallGroupSupplementalAnnouncement() {
 }
 
 function buildSmallGroupAnnouncement(service, meeting) {
+  if (isSmallGroupMeetingPaused(meeting)) {
+    return [
+      "本週小組暫停一次。",
+      "",
+      `原因：${meeting.pauseReason || "未填寫"}`,
+      "",
+      "下週恢復正常聚會，請大家留意群組通知。",
+    ].join("\n");
+  }
+
   const lines = [service.announcementTemplate.opening, ""];
+  const activityName = getSmallGroupActivityName(meeting);
+  if (activityName) {
+    lines.push(`本週聚會：${activityName}`, "");
+  }
   if (service.settings.includeFields.monthTheme) {
     lines.push(`本月主題:  『${meeting.monthTheme || "待填寫"}』`, "");
   }
@@ -4480,7 +4799,11 @@ function buildSmallGroupAnnouncement(service, meeting) {
   lines.push(`地點: ${meeting.location || "待填寫"}`);
   lines.push(`時間: (${getWeekdayAnnouncementLabel(meeting.date)})${formatAnnouncementTimeRange(meeting.startTime, meeting.endTime)}`, "");
   lines.push(`本週服事表 (${formatSmallGroupDateShort(meeting.date)})`, "");
-  SMALL_GROUP_DUTIES.forEach((duty) => {
+  const enabledDuties = getSmallGroupEnabledDuties(meeting);
+  if (enabledDuties.length === 0) {
+    lines.push("本週無需安排服事項目。");
+  }
+  enabledDuties.forEach((duty) => {
     lines.push(`${duty.label}：${getSmallGroupAssignmentName(meeting.assignments[duty.id]) || "待安排"}`);
   });
   lines.push("", service.announcementTemplate.closing);
@@ -4508,13 +4831,26 @@ function renderSmallGroupScheduleImage(service) {
 
   const meetings = getSmallGroupMeetingList(service);
   const columns = [
-    { label: "日期", width: 130, value: (meeting) => formatSmallGroupDateShort(meeting.date) },
+    { label: "日期", width: 150, value: (meeting) => {
+      const activityName = getSmallGroupActivityName(meeting);
+      return activityName ? `${formatSmallGroupDateShort(meeting.date)} ${activityName}` : formatSmallGroupDateShort(meeting.date);
+    } },
     { label: "地點", width: 230, value: (meeting) => meeting.location || "待填寫" },
     { label: "時間", width: 180, value: (meeting) => formatAnnouncementTimeRange(meeting.startTime, meeting.endTime) },
     ...SMALL_GROUP_DUTIES.map((duty) => ({
       label: duty.label,
       width: 150,
-      value: (meeting) => getSmallGroupAssignmentName(meeting.assignments?.[duty.id]) || "待安排",
+      value: (meeting) => {
+        if (isSmallGroupMeetingPaused(meeting)) {
+          return duty.id === SMALL_GROUP_DUTIES[0].id
+            ? `本週停聚${meeting.pauseReason ? `：${meeting.pauseReason}` : ""}`
+            : "";
+        }
+        if (!isSmallGroupDutyEnabled(meeting, duty.id)) {
+          return "不排";
+        }
+        return getSmallGroupAssignmentName(meeting.assignments?.[duty.id]) || "待安排";
+      },
     })),
   ];
   const padding = 28;
@@ -4625,6 +4961,8 @@ function ensureSmallGroupMeetings(service) {
   generatedDates.forEach((dateKey) => {
     if (!service.meetings[dateKey]) {
       service.meetings[dateKey] = normalizeSmallGroupMeeting(dateKey, { date: dateKey });
+    } else {
+      service.meetings[dateKey] = normalizeSmallGroupMeeting(dateKey, service.meetings[dateKey]);
     }
   });
 }
@@ -4655,6 +4993,10 @@ function getSmallGroupMeetingList(service) {
   const generated = new Set(getSmallGroupGeneratedDates(service.settings.startMonth, service.settings.monthSpan, service.settings.meetingWeekday));
   return Object.values(service.meetings)
     .filter((meeting) => generated.has(meeting.id))
+    .map((meeting) => {
+      service.meetings[meeting.id] = normalizeSmallGroupMeeting(meeting.id, meeting);
+      return service.meetings[meeting.id];
+    })
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
