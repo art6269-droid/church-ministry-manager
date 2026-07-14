@@ -60,6 +60,18 @@ const LEVELS = [
   { id: "leader", label: "領袖", duties: ["hospitality", "tech", "groupSupport", "groupLead", "worshipSupport", "worshipLead", "messageSupport", "messageLead", "host"] },
 ];
 
+const DISCIPLESHIP_LEVELS = [
+  { id: "growth", label: "成長班" },
+  { id: "disciple", label: "門徒班" },
+  { id: "leaderClass", label: "領袖班" },
+  { id: "leaderCoworker", label: "領袖同工" },
+  { id: "groupLeader", label: "小組長" },
+  { id: "zoneLeader", label: "區長" },
+  { id: "zoneSupervisor", label: "區督" },
+  { id: "zonePastor", label: "區牧" },
+];
+const DEFAULT_DISCIPLESHIP_LEVEL_ID = "growth";
+
 const WORKER_IDENTITIES = [
   { id: "regular", label: "一般同工" },
   { id: "fullTime", label: "全職同工" },
@@ -134,7 +146,7 @@ const SMALL_GROUP_DUTIES = [
   { id: "icebreaker", label: "破冰" },
   { id: "worship", label: "敬拜" },
   { id: "testimony", label: "見證" },
-  { id: "word", label: "話語" },
+  { id: "word", label: "話語分享" },
   { id: "snack", label: "點心" },
 ];
 const SMALL_GROUP_DEFAULT_CATEGORIES = ["實體小組", "線上小組", "海外小組", "青年小組", "家庭小組", "門訓小組", "其他"];
@@ -145,6 +157,11 @@ const SMALL_GROUP_LEVEL_DUTY_RULES = {
   coworker: ["icebreaker", "snack", "testimony", "worship", "word"],
   leader: ["icebreaker", "snack", "testimony", "worship", "word"],
 };
+const DEFAULT_TODDLER_ROLE_QUALIFICATIONS = {
+  worshipLead: "leaderClass",
+  messageLead: "leaderCoworker",
+};
+const DEFAULT_SMALL_GROUP_ROLE_QUALIFICATIONS = {};
 
 const WEEKDAY_OPTIONS = [
   { id: 1, label: "週一", announcement: "一" },
@@ -212,6 +229,7 @@ function bindElements() {
   elements.volunteerNickname = document.querySelector("#volunteerNickname");
   elements.volunteerNote = document.querySelector("#volunteerNote");
   elements.volunteerLevel = document.querySelector("#volunteerLevel");
+  elements.volunteerDiscipleshipLevel = document.querySelector("#volunteerDiscipleshipLevel");
   elements.volunteerType = document.querySelector("#volunteerType");
   elements.specialTypeField = document.querySelector("#specialTypeField");
   elements.volunteerSpecialType = document.querySelector("#volunteerSpecialType");
@@ -291,6 +309,7 @@ function bindElements() {
   elements.smallGroupWorkerName = document.querySelector("#smallGroupWorkerName");
   elements.smallGroupWorkerNickname = document.querySelector("#smallGroupWorkerNickname");
   elements.smallGroupWorkerLevel = document.querySelector("#smallGroupWorkerLevel");
+  elements.smallGroupWorkerDiscipleshipLevel = document.querySelector("#smallGroupWorkerDiscipleshipLevel");
   elements.smallGroupWorkerList = document.querySelector("#smallGroupWorkerList");
   elements.autoSmallGroupScheduleBtn = document.querySelector("#autoSmallGroupScheduleBtn");
   elements.smallGroupScheduleSummary = document.querySelector("#smallGroupScheduleSummary");
@@ -332,6 +351,7 @@ function bindEvents() {
   elements.modulePanel.addEventListener("change", changeModuleSelection);
   elements.desktopSidebar?.addEventListener("click", handleDesktopSidebar);
   elements.volunteerLevel.addEventListener("change", renderFormOptions);
+  elements.volunteerDiscipleshipLevel.addEventListener("change", renderFormOptions);
   elements.volunteerType.addEventListener("change", renderFormOptions);
   elements.volunteerSpecialType.addEventListener("change", renderFormOptions);
   elements.fixedDutyEnabled.addEventListener("change", renderFormOptions);
@@ -476,6 +496,7 @@ function normalizeWorker(worker) {
   const identity = normalizeWorkerIdentity(worker);
   const specialType = normalizeSpecialType(worker, identity);
   const type = getEffectiveWorkerType({ identity, specialType, type: worker.type });
+  const discipleshipLevel = inferToddlerDiscipleshipLevel(worker, { level, identity, specialType, type });
   const rawBestDuties = Array.isArray(worker.bestDuties)
     ? worker.bestDuties
     : worker.bestDuty
@@ -488,6 +509,7 @@ function normalizeWorker(worker) {
     nickname: String(worker.nickname || "").trim(),
     note: String(worker.note || ""),
     level,
+    discipleshipLevel,
     identity,
     specialType,
     type,
@@ -566,11 +588,13 @@ function normalizeSmallGroupModuleWorkers(workers = []) {
 }
 
 function normalizeSmallGroupWorker(worker = {}) {
+  const level = normalizeSmallGroupLevelId(worker.level);
   return {
     id: String(worker.id),
     name: String(worker.name || "").trim(),
     nickname: String(worker.nickname || "").trim(),
-    level: normalizeSmallGroupLevelId(worker.level),
+    level,
+    discipleshipLevel: inferSmallGroupDiscipleshipLevel(worker, level),
     bestDuties: unique(Array.isArray(worker.bestDuties) ? worker.bestDuties : []).filter((dutyId) => getSmallGroupDuty(dutyId)),
     weakDuties: unique(Array.isArray(worker.weakDuties) ? worker.weakDuties : []).filter((dutyId) => getSmallGroupDuty(dutyId)),
     unavailableDates: normalizeSmallGroupUnavailableDates(worker.unavailableDates || worker.cantServeDates || worker.blockedDates),
@@ -652,6 +676,11 @@ function normalizeSmallGroupSettings(settings = {}) {
     monthSpan: [1, 2, 3].includes(Number(settings.monthSpan)) ? Number(settings.monthSpan) : 1,
     meetingWeekday: WEEKDAY_OPTIONS.some((item) => item.id === Number(settings.meetingWeekday)) ? Number(settings.meetingWeekday) : 6,
     defaultLocation: String(settings.defaultLocation || ""),
+    roleQualifications: normalizeRoleQualifications(
+      settings.roleQualifications,
+      SMALL_GROUP_DUTIES,
+      DEFAULT_SMALL_GROUP_ROLE_QUALIFICATIONS,
+    ),
     includeFields: {
       monthTheme: settings.includeFields?.monthTheme ?? true,
       weekTheme: settings.includeFields?.weekTheme ?? true,
@@ -764,12 +793,17 @@ function createToddlerServiceState(service, legacySchedules = {}, workers = []) 
   };
 }
 
-function createToddlerRulesState() {
+function createToddlerRulesState(rules = {}) {
   return {
-    levelSystem: "toddlerSundaySchool",
-    roleSet: "toddlerSundaySchool",
-    groupSet: "toddlerSundaySchool",
-    scheduler: "toddlerSundaySchoolFirstService",
+    levelSystem: rules.levelSystem || "toddlerSundaySchool",
+    roleSet: rules.roleSet || "toddlerSundaySchool",
+    groupSet: rules.groupSet || "toddlerSundaySchool",
+    scheduler: rules.scheduler || "toddlerSundaySchoolFirstService",
+    roleQualifications: normalizeRoleQualifications(
+      rules.roleQualifications,
+      MAIN_ROLES,
+      DEFAULT_TODDLER_ROLE_QUALIFICATIONS,
+    ),
   };
 }
 
@@ -967,7 +1001,7 @@ function normalizeMinistries(savedMinistries, legacySchedules = {}, legacyVolunt
         implemented: template.implemented,
         workers: dedupeWorkers(migratedServiceWorkers).filter((worker) => !isFullTimeWorker(worker)),
         schedules: normalizeSchedules(service.schedules || {}),
-        rules: { ...createToddlerRulesState(), ...(service.rules || {}) },
+        rules: createToddlerRulesState(service.rules),
         futureFeatures: normalizeFutureFeatures(service.futureFeatures),
       };
     });
@@ -982,7 +1016,7 @@ function normalizeMinistries(savedMinistries, legacySchedules = {}, legacyVolunt
       fullTimeWorkers,
       services,
       serviceOrder: Array.isArray(ministry.serviceOrder) ? ministry.serviceOrder : base.serviceOrder,
-      rules: { ...createToddlerRulesState(), ...(ministry.rules || {}) },
+      rules: createToddlerRulesState(ministry.rules),
     };
   });
 
@@ -1286,6 +1320,11 @@ function changeModule(event) {
 
 function changeModuleSelection(event) {
   const target = event.target;
+  if (target.dataset.roleQualification) {
+    updateRoleQualificationSetting(target);
+    return;
+  }
+
   if (target.id === "mobileModuleSelect") {
     const module = MINISTRY_MODULES.find((item) => item.id === target.value);
     if (!module?.implemented) return;
@@ -1309,6 +1348,23 @@ function changeModuleSelection(event) {
     latestNotices = [];
     render();
   }
+}
+
+function updateRoleQualificationSetting(select) {
+  const dutyId = select.dataset.roleQualification;
+  const value = normalizeRoleRequirementLevelId(select.value);
+  if (isSmallGroupModuleActive()) {
+    const service = getSmallGroupServiceState();
+    service.settings = normalizeSmallGroupSettings(service.settings);
+    service.settings.roleQualifications[dutyId] = value;
+  } else {
+    const service = getActiveServiceState();
+    service.rules = createToddlerRulesState(service.rules);
+    service.rules.roleQualifications[dutyId] = value;
+  }
+  latestNotices = [];
+  render();
+  showToast("職務資格設定已更新");
 }
 
 function renderView() {
@@ -1748,12 +1804,47 @@ function renderModulePanel() {
       </div>
       <span class="pill">本模組同工資料庫</span>
     </div>
+    ${renderRoleQualificationSettings()}
   `;
   renderDesktopSidebar();
 }
 
+function renderRoleQualificationSettings() {
+  const isSmallGroup = isSmallGroupModuleActive();
+  const duties = isSmallGroup ? SMALL_GROUP_DUTIES : MAIN_ROLES;
+  const rules = isSmallGroup
+    ? getSmallGroupRoleQualifications(getSmallGroupServiceState())
+    : getToddlerRoleQualifications();
+  const note = isSmallGroup
+    ? "小組服事表會依這裡設定的最低培育壘包篩選候選人。"
+    : "自動排班與手動調整都會依這裡設定的最低培育壘包篩選候選人。";
+
+  return `
+    <section class="role-qualification-settings">
+      <div class="module-subhead">
+        <div>
+          <p class="eyebrow">Qualification</p>
+          <h3>職務資格設定</h3>
+        </div>
+        <span>${note}</span>
+      </div>
+      <div class="role-qualification-grid">
+        ${duties.map((duty) => `
+          <label class="field">
+            <span>${escapeHtml(duty.label)}</span>
+            <select data-role-qualification="${escapeAttribute(duty.id)}">
+              ${renderMinimumDiscipleshipLevelOptions(rules[duty.id])}
+            </select>
+          </label>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderFormOptions() {
   const level = getLevel(elements.volunteerLevel.value)?.id || "new";
+  const discipleshipLevel = normalizeDiscipleshipLevelId(elements.volunteerDiscipleshipLevel.value);
   const identity = getWorkerIdentity(elements.volunteerType.value)?.id || "regular";
   const specialType = getSpecialType(elements.volunteerSpecialType.value)?.id || "pastor";
   const type = identity === "special" ? specialType : identity;
@@ -1763,9 +1854,11 @@ function renderFormOptions() {
   const reservedRole = elements.volunteerReservedRole.value;
 
   elements.volunteerLevel.innerHTML = LEVELS.map((item) => `<option value="${item.id}">${item.label}</option>`).join("");
+  elements.volunteerDiscipleshipLevel.innerHTML = renderDiscipleshipLevelOptions(discipleshipLevel);
   elements.volunteerType.innerHTML = renderIdentityOptions(identity);
   elements.volunteerSpecialType.innerHTML = renderSpecialTypeOptions(specialType);
   elements.volunteerLevel.value = level;
+  elements.volunteerDiscipleshipLevel.value = discipleshipLevel;
   elements.volunteerType.value = identity;
   elements.volunteerSpecialType.value = specialType;
   elements.specialTypeField.classList.toggle("hidden", identity !== "special");
@@ -1789,11 +1882,15 @@ function renderFormOptions() {
 function renderAllowedPreview() {
   const worker = {
     level: getLevel(elements.volunteerLevel.value)?.id || "new",
+    discipleshipLevel: normalizeDiscipleshipLevelId(elements.volunteerDiscipleshipLevel.value),
     identity: getWorkerIdentity(elements.volunteerType.value)?.id || "regular",
     specialType: getSpecialType(elements.volunteerSpecialType.value)?.id || "pastor",
   };
   worker.type = getEffectiveWorkerType(worker);
-  elements.allowedPreview.innerHTML = getDutyLabelsForWorker(worker)
+  elements.allowedPreview.innerHTML = [
+    `培育壘包：${getWorkerDiscipleshipLevelLabel(worker)}`,
+    ...getDutyLabelsForWorker(worker),
+  ]
     .map((label) => `<span class="tag">${escapeHtml(label)}</span>`)
     .join("");
 }
@@ -1821,7 +1918,7 @@ function getFilteredWorkers() {
 }
 
 function getWorkerSummary(worker) {
-  const pieces = [getLevel(worker.level).label, getWorkerIdentity(worker.identity).label];
+  const pieces = [getLevel(worker.level).label, `培育壘包：${getWorkerDiscipleshipLevelLabel(worker)}`, getWorkerIdentity(worker.identity).label];
   const effectiveType = getEffectiveWorkerType(worker);
   const leadGroups = worker.leadGroups.map((groupId) => getGroup(groupId)?.label).filter(Boolean);
   const supportGroups = worker.supportGroups.map((groupId) => getGroup(groupId)?.label).filter(Boolean);
@@ -1948,6 +2045,10 @@ function renderVolunteerList() {
               <label>
                 <span>等級</span>
                 <select data-worker-level="${escapeAttribute(worker.id)}">${renderLevelOptions(worker.level)}</select>
+              </label>
+              <label>
+                <span>教會培育壘包</span>
+                <select data-worker-discipleship-level="${escapeAttribute(worker.id)}">${renderDiscipleshipLevelOptions(worker.discipleshipLevel)}</select>
               </label>
               <label>
                 <span>同工身份</span>
@@ -2254,6 +2355,8 @@ function getCandidateBlockedReason(worker, roleId, weekId, context = {}) {
   if (!worker || !roleId) return "同工資料不存在";
   if (!schedule.available.includes(worker.id)) return "該週不能服事";
   if (!canDoWorker(worker, roleId)) return "等級不符";
+  const discipleshipReason = getMainDiscipleshipBlockedReason(worker, roleId);
+  if (discipleshipReason) return discipleshipReason;
 
   if (context.type === "group") {
     const group = getGroup(context.groupId);
@@ -2327,6 +2430,7 @@ function getManualMainAssignmentBasicIssue(workerId, roleId, weekId, schedules, 
     slot: options.slot || 0,
     currentValue: options.currentValue || "",
   });
+  if (blockedReason === "培育壘包不足") return getDiscipleshipQualificationMessage(worker, role.label);
   if (blockedReason) return blockedReason;
   return "";
 }
@@ -3265,6 +3369,7 @@ function renderSmallGroupSettings(service) {
 
 function renderSmallGroupWorkers(service) {
   elements.smallGroupWorkerLevel.innerHTML = renderSmallGroupLevelOptions(elements.smallGroupWorkerLevel.value || "regular");
+  elements.smallGroupWorkerDiscipleshipLevel.innerHTML = renderDiscipleshipLevelOptions(elements.smallGroupWorkerDiscipleshipLevel.value || DEFAULT_DISCIPLESHIP_LEVEL_ID);
 
   if (state.volunteers.length === 0) {
     elements.smallGroupWorkerList.innerHTML = `<div class="empty-state">尚無小組同工資料</div>`;
@@ -3291,6 +3396,10 @@ function renderSmallGroupWorkers(service) {
             <label class="field">
               <span>小組服事等級</span>
               <select data-small-group-worker-level="${escapeAttribute(worker.id)}">${renderSmallGroupLevelOptions(worker.level)}</select>
+            </label>
+            <label class="field">
+              <span>教會培育壘包</span>
+              <select data-small-group-worker-discipleship-level="${escapeAttribute(worker.id)}">${renderDiscipleshipLevelOptions(worker.discipleshipLevel)}</select>
             </label>
             <fieldset class="best-duty-field">
               <legend>最適合小組服事項目</legend>
@@ -3331,6 +3440,7 @@ function renderSmallGroupScheduleSummary(service) {
   const notices = unique([
     ...(Array.isArray(service.scheduleNotices) ? service.scheduleNotices : []),
     ...getSmallGroupUnavailableConflicts(service),
+    ...getSmallGroupQualificationConflicts(service),
   ]);
   const noticeHtml = notices.length
     ? `<details class="small-group-notices" open>
@@ -3437,6 +3547,24 @@ function getSmallGroupUnavailableConflicts(service) {
         return [];
       }
       return [`${getDisplayName(worker)} ${formatSmallGroupDateShort(meeting.date)} 已排${duty.label}，但標記為不能服事`];
+    });
+  });
+}
+
+function getSmallGroupQualificationConflicts(service) {
+  return getSmallGroupMeetingList(service).flatMap((meeting) => {
+    return SMALL_GROUP_DUTIES.flatMap((duty) => {
+      const worker = getWorker(meeting.assignments?.[duty.id]);
+      if (!worker) {
+        return [];
+      }
+      const issue = getSmallGroupCandidateIssue(worker, duty.id, meeting.date, service);
+      if (!issue || issue === "當天不能服事") {
+        return [];
+      }
+      return [issue === "培育壘包不足"
+        ? getDiscipleshipQualificationMessage(worker, duty.label)
+        : `${getDisplayName(worker)} 不可擔任${duty.label}：${issue}`];
     });
   });
 }
@@ -3621,7 +3749,7 @@ function getSmallGroupSwapOptions(service, meeting, duty) {
 
 function isSmallGroupDirectReplacementCandidate(worker, service, meeting, duty, currentWorkerId) {
   return worker.id !== currentWorkerId
-    && canSmallGroupWorkerServeDuty(worker, duty.id)
+    && canSmallGroupWorkerServeDuty(worker, duty.id, service)
     && !isSmallGroupWorkerUnavailableOnDate(worker, meeting.date)
     && getSmallGroupWorkerDutyIdsInMeeting(meeting, worker.id).length === 0;
 }
@@ -3640,8 +3768,8 @@ function getSmallGroupSameDateSwapOptions(service, meeting, targetDuty, currentW
     .map((otherDuty) => {
       const worker = getWorker(meeting.assignments?.[otherDuty.id]);
       if (!worker || worker.id === currentWorkerId) return null;
-      if (!canSmallGroupWorkerServeDuty(worker, targetDuty.id) || isSmallGroupWorkerUnavailableOnDate(worker, meeting.date)) return null;
-      if (!canSmallGroupWorkerServeDuty(currentWorker, otherDuty.id)) return null;
+      if (!canSmallGroupWorkerServeDuty(worker, targetDuty.id, service) || isSmallGroupWorkerUnavailableOnDate(worker, meeting.date)) return null;
+      if (!canSmallGroupWorkerServeDuty(currentWorker, otherDuty.id, service)) return null;
       return createSmallGroupSwapOption("same-date-swap", worker, service, meeting, targetDuty, {
         otherMeetingId: meeting.id,
         otherDutyId: otherDuty.id,
@@ -3663,8 +3791,8 @@ function getSmallGroupCrossDateSwapOptions(service, meeting, targetDuty, current
       if (!worker || worker.id === currentWorkerId) return null;
       if (getSmallGroupWorkerDutyIdsInMeeting(meeting, worker.id).length > 0) return null;
       if (getSmallGroupWorkerDutyIdsInMeeting(otherMeeting, currentWorkerId).length > 0) return null;
-      if (!canSmallGroupWorkerServeDuty(worker, targetDuty.id) || isSmallGroupWorkerUnavailableOnDate(worker, meeting.date)) return null;
-      if (!canSmallGroupWorkerServeDuty(currentWorker, targetDuty.id) || isSmallGroupWorkerUnavailableOnDate(currentWorker, otherMeeting.date)) return null;
+      if (!canSmallGroupWorkerServeDuty(worker, targetDuty.id, service) || isSmallGroupWorkerUnavailableOnDate(worker, meeting.date)) return null;
+      if (!canSmallGroupWorkerServeDuty(currentWorker, targetDuty.id, service) || isSmallGroupWorkerUnavailableOnDate(currentWorker, otherMeeting.date)) return null;
       return createSmallGroupSwapOption("cross-date-swap", worker, service, meeting, targetDuty, {
         otherMeetingId: otherMeeting.id,
         otherDutyId: targetDuty.id,
@@ -3999,7 +4127,7 @@ function updateSmallGroupSettings() {
 
 function updateSmallGroupWorkerSettings(event) {
   const target = event.target;
-  const workerId = target.dataset.smallGroupWorkerNickname || target.dataset.smallGroupWorkerLevel || target.dataset.smallGroupWorkerBest || target.dataset.smallGroupWorkerWeak || target.dataset.smallGroupWorkerNote;
+  const workerId = target.dataset.smallGroupWorkerNickname || target.dataset.smallGroupWorkerLevel || target.dataset.smallGroupWorkerDiscipleshipLevel || target.dataset.smallGroupWorkerBest || target.dataset.smallGroupWorkerWeak || target.dataset.smallGroupWorkerNote;
   if (!workerId) return;
   const worker = getWorker(workerId);
   if (!worker) return;
@@ -4009,6 +4137,9 @@ function updateSmallGroupWorkerSettings(event) {
   }
   if (target.dataset.smallGroupWorkerLevel) {
     worker.level = target.value;
+  }
+  if (target.dataset.smallGroupWorkerDiscipleshipLevel) {
+    worker.discipleshipLevel = target.value;
   }
   if (target.dataset.smallGroupWorkerBest) {
     const dutyId = target.dataset.dutyId;
@@ -4079,6 +4210,7 @@ function addSmallGroupWorker(event) {
     name,
     nickname: elements.smallGroupWorkerNickname.value,
     level: elements.smallGroupWorkerLevel.value,
+    discipleshipLevel: elements.smallGroupWorkerDiscipleshipLevel.value,
   }));
   elements.smallGroupWorkerForm.reset();
   expandedSmallGroupWorkerId = "";
@@ -4141,6 +4273,7 @@ function autoGenerateSmallGroupSchedule() {
         previousDutyWorkerId: previousMeeting?.assignments?.[duty.id] || "",
         usedThisMeeting,
         date: meeting.date,
+        service,
       });
 
       if (!selectedWorker) {
@@ -4196,7 +4329,7 @@ function applySmallGroupDefaultLocation(service, meetings, reapplyAll = false) {
 
 function pickSmallGroupWorkerForDuty(dutyId, workers, context) {
   const candidatePools = [
-    workers.filter((worker) => canSmallGroupWorkerServeDuty(worker, dutyId) && !isSmallGroupWorkerUnavailableOnDate(worker, context.date)),
+    workers.filter((worker) => canSmallGroupWorkerServeDuty(worker, dutyId, context.service) && !isSmallGroupWorkerUnavailableOnDate(worker, context.date)),
   ];
 
   const tiers = [
@@ -4273,6 +4406,13 @@ function updateSmallGroupMeeting(event) {
     }
   }
   if (dutyId) {
+    const worker = getWorker(event.target.value);
+    const issue = event.target.value ? getSmallGroupCandidateIssue(worker, dutyId, meeting.date, service) : "";
+    if (issue) {
+      showToast(issue === "培育壘包不足" ? getDiscipleshipQualificationMessage(worker, getSmallGroupDuty(dutyId)?.label || dutyId) : issue);
+      renderSmallGroupMeetingEditor(service);
+      return;
+    }
     meeting.assignments[dutyId] = event.target.value;
     service.scheduleNotices = [];
   }
@@ -4532,6 +4672,7 @@ function getSmallGroupWorkerSummary(worker) {
   const nickname = String(worker.nickname || "").trim();
   pieces.push(`暱稱：${nickname || "未填"}`);
   pieces.push(`等級：${getSmallGroupLevel(worker.level).label}`);
+  pieces.push(`培育壘包：${getWorkerDiscipleshipLevelLabel(worker)}`);
   const bestLabels = getSmallGroupDutyLabels(worker.bestDuties);
   pieces.push(`擅長：${bestLabels.length ? bestLabels.join("、") : "未設定"}`);
   if (worker.unavailableDates?.length) {
@@ -4574,13 +4715,27 @@ function isSmallGroupWorkerUnavailableOnDate(worker, dateKey) {
   return Boolean(worker && normalizeSmallGroupUnavailableDates(worker.unavailableDates || []).includes(normalizeDateInputValue(dateKey)));
 }
 
-function canSmallGroupWorkerServeDuty(worker, dutyId) {
+function canSmallGroupWorkerServeDutyByLevel(worker, dutyId) {
   if (!worker || !getSmallGroupDuty(dutyId)) return false;
   const level = getSmallGroupLevel(worker.level).id;
   if (SMALL_GROUP_LEVEL_DUTY_RULES[level]?.includes(dutyId)) {
     return true;
   }
   return false;
+}
+
+function canSmallGroupWorkerServeDuty(worker, dutyId, service = getSmallGroupServiceState()) {
+  return canSmallGroupWorkerServeDutyByLevel(worker, dutyId)
+    && !getSmallGroupDiscipleshipBlockedReason(worker, dutyId, service);
+}
+
+function getSmallGroupCandidateIssue(worker, dutyId, meetingDate = "", service = getSmallGroupServiceState()) {
+  if (!worker || !getSmallGroupDuty(dutyId)) return "同工資料不存在";
+  if (!canSmallGroupWorkerServeDutyByLevel(worker, dutyId)) return "等級不符";
+  const discipleshipReason = getSmallGroupDiscipleshipBlockedReason(worker, dutyId, service);
+  if (discipleshipReason) return discipleshipReason;
+  if (isSmallGroupWorkerUnavailableOnDate(worker, meetingDate)) return "當天不能服事";
+  return "";
 }
 
 function getSmallGroupLevelDutyLabels(levelId) {
@@ -4601,14 +4756,12 @@ function renderSmallGroupDutyCheckboxes(currentValues, workerId, kind) {
 
 function renderSmallGroupWorkerOptions(service, currentValue = "", dutyId = "", meetingDate = "") {
   return state.volunteers
-    .filter((worker) => {
-      return worker.id === currentValue || (canSmallGroupWorkerServeDuty(worker, dutyId) && !isSmallGroupWorkerUnavailableOnDate(worker, meetingDate));
-    })
     .map((worker) => {
-      const isAllowed = canSmallGroupWorkerServeDuty(worker, dutyId);
-      const isUnavailable = isSmallGroupWorkerUnavailableOnDate(worker, meetingDate);
-      const suffix = isAllowed ? (isUnavailable ? "（當天不能服事）" : "") : "（等級不符）";
-      return `<option value="${escapeAttribute(worker.id)}" ${worker.id === currentValue ? "selected" : ""} ${isAllowed && !isUnavailable ? "" : "disabled"}>${escapeHtml(getDisplayName(worker) + suffix)}</option>`;
+      const issue = getSmallGroupCandidateIssue(worker, dutyId, meetingDate, service);
+      const isBlocked = Boolean(issue);
+      const icon = isBlocked ? "🔴" : "🟢";
+      const suffix = issue ? `（${issue}）` : "";
+      return `<option value="${escapeAttribute(worker.id)}" ${worker.id === currentValue ? "selected" : ""} ${isBlocked && worker.id !== currentValue ? "disabled" : ""}>${escapeHtml(`${icon} ${getDisplayName(worker)}${suffix}`)}</option>`;
     })
     .join("");
 }
@@ -4693,6 +4846,7 @@ function addVolunteer(event) {
     nickname: elements.volunteerNickname.value,
     note: elements.volunteerNote.value,
     level: elements.volunteerLevel.value,
+    discipleshipLevel: elements.volunteerDiscipleshipLevel.value,
     identity,
     specialType,
     type: identity === "special" ? specialType : identity,
@@ -4743,7 +4897,7 @@ function toggleWorkerAccordion(event) {
 
 function updateWorkerSettings(event) {
   const target = event.target;
-  const workerId = target.dataset.workerNickname || target.dataset.workerNote || target.dataset.workerLevel || target.dataset.workerIdentity || target.dataset.workerSpecialType || target.dataset.workerType || target.dataset.workerHostCandidate || target.dataset.workerMostSenior || target.dataset.workerReservedRole || target.dataset.workerMonthlyCount || target.dataset.workerBestDuty || target.dataset.workerWeakDuty || target.dataset.workerFixedDutyEnabled || target.dataset.workerFixedRole || target.dataset.workerFixedGroupEnabled || target.dataset.workerFixedGroup || target.dataset.workerLeadGroup || target.dataset.workerSupportGroup;
+  const workerId = target.dataset.workerNickname || target.dataset.workerNote || target.dataset.workerLevel || target.dataset.workerDiscipleshipLevel || target.dataset.workerIdentity || target.dataset.workerSpecialType || target.dataset.workerType || target.dataset.workerHostCandidate || target.dataset.workerMostSenior || target.dataset.workerReservedRole || target.dataset.workerMonthlyCount || target.dataset.workerBestDuty || target.dataset.workerWeakDuty || target.dataset.workerFixedDutyEnabled || target.dataset.workerFixedRole || target.dataset.workerFixedGroupEnabled || target.dataset.workerFixedGroup || target.dataset.workerLeadGroup || target.dataset.workerSupportGroup;
   if (!workerId) {
     return;
   }
@@ -4755,6 +4909,9 @@ function updateWorkerSettings(event) {
 
   if (target.dataset.workerLevel) {
     worker.level = target.value;
+  }
+  if (target.dataset.workerDiscipleshipLevel) {
+    worker.discipleshipLevel = target.value;
   }
   if (target.dataset.workerNickname) {
     worker.nickname = target.value;
@@ -5434,6 +5591,10 @@ function assignPastorReservedRoles(weeks, schedules, notices) {
       notices.push(`${getDisplayName(worker)} 的區牧預留職務不符合等級資格`);
       return;
     }
+    if (getMainDiscipleshipBlockedReason(worker, role.id)) {
+      notices.push(getDiscipleshipQualificationMessage(worker, role.label));
+      return;
+    }
 
     const candidateWeeks = [...weeks].sort((a, b) => {
       const availableDiff = Number(ensureScheduleIn(schedules, b).available.includes(worker.id)) - Number(ensureScheduleIn(schedules, a).available.includes(worker.id));
@@ -5647,6 +5808,9 @@ function getMainAssignmentIssue(workerId, roleId, weekId, schedules, options = {
   if (!worker || !role) return "找不到這位同工或職務";
   if (!schedule.available.includes(workerId)) return `${getDisplayName(worker)} 本週未勾選能服事`;
   if (options.auto ? !canAutoAssignDuty(worker, roleId) : !canDoWorker(worker, roleId)) return `${getDisplayName(worker)} 的等級或設定不能擔任「${role.label}」`;
+  if (getMainDiscipleshipBlockedReason(worker, roleId)) {
+    return getDiscipleshipQualificationMessage(worker, role.label);
+  }
   const duplicatedRole = MAIN_ROLES.find((item) => {
     const assignedIds = getMainAssignmentIds(schedule, item.id);
     if (!assignedIds.includes(workerId)) {
@@ -6605,6 +6769,134 @@ function fixedModeAllowsClass(modeId) {
 
 function getLevel(levelId) {
   return LEVELS.find((level) => level.id === levelId) || null;
+}
+
+function normalizeDiscipleshipLevelId(levelValue, fallback = DEFAULT_DISCIPLESHIP_LEVEL_ID) {
+  const value = String(levelValue || "").trim();
+  if (!value) {
+    return fallback;
+  }
+  const matched = DISCIPLESHIP_LEVELS.find((level) => level.id === value || level.label === value);
+  return matched?.id || fallback;
+}
+
+function normalizeRoleRequirementLevelId(levelValue) {
+  return normalizeDiscipleshipLevelId(levelValue, "");
+}
+
+function normalizeRoleQualifications(savedRules = {}, duties = [], defaults = {}) {
+  const rawRules = savedRules && typeof savedRules === "object" ? savedRules : {};
+  return duties.reduce((rules, duty) => {
+    const hasSavedValue = Object.prototype.hasOwnProperty.call(rawRules, duty.id);
+    const value = hasSavedValue ? rawRules[duty.id] : defaults[duty.id] || "";
+    rules[duty.id] = normalizeRoleRequirementLevelId(value);
+    return rules;
+  }, {});
+}
+
+function inferToddlerDiscipleshipLevel(worker = {}, profile = {}) {
+  const explicit = worker.discipleshipLevel || worker.trainingLevel || worker.cultivationLevel || worker.trainingStage;
+  if (explicit) {
+    return normalizeDiscipleshipLevelId(explicit);
+  }
+  if (profile.type === "pastor" || profile.specialType === "pastor") {
+    return "zonePastor";
+  }
+  const levelMap = {
+    new: "growth",
+    advanced: "disciple",
+    senior: "leaderClass",
+    leader: "leaderCoworker",
+  };
+  return levelMap[profile.level] || DEFAULT_DISCIPLESHIP_LEVEL_ID;
+}
+
+function inferSmallGroupDiscipleshipLevel(worker = {}, level = "regular") {
+  const explicit = worker.discipleshipLevel || worker.trainingLevel || worker.cultivationLevel || worker.trainingStage;
+  if (explicit) {
+    return normalizeDiscipleshipLevelId(explicit);
+  }
+  const levelMap = {
+    new: "growth",
+    regular: "disciple",
+    advanced: "leaderClass",
+    coworker: "leaderCoworker",
+    leader: "groupLeader",
+  };
+  return levelMap[level] || DEFAULT_DISCIPLESHIP_LEVEL_ID;
+}
+
+function getDiscipleshipLevel(levelId) {
+  const normalizedLevelId = normalizeDiscipleshipLevelId(levelId);
+  return DISCIPLESHIP_LEVELS.find((level) => level.id === normalizedLevelId) || DISCIPLESHIP_LEVELS[0];
+}
+
+function getDiscipleshipLevelLabel(levelId) {
+  return getDiscipleshipLevel(levelId).label;
+}
+
+function getWorkerDiscipleshipLevelLabel(worker) {
+  return getDiscipleshipLevelLabel(worker?.discipleshipLevel || DEFAULT_DISCIPLESHIP_LEVEL_ID);
+}
+
+function getDiscipleshipLevelRank(levelId) {
+  return DISCIPLESHIP_LEVELS.findIndex((level) => level.id === normalizeDiscipleshipLevelId(levelId));
+}
+
+function workerMeetsDiscipleshipRequirement(worker, minimumLevelId) {
+  const minimum = normalizeRoleRequirementLevelId(minimumLevelId);
+  if (!minimum) {
+    return true;
+  }
+  return getDiscipleshipLevelRank(worker?.discipleshipLevel) >= getDiscipleshipLevelRank(minimum);
+}
+
+function renderDiscipleshipLevelOptions(currentValue) {
+  const value = normalizeDiscipleshipLevelId(currentValue);
+  return DISCIPLESHIP_LEVELS.map((level) => `<option value="${level.id}" ${level.id === value ? "selected" : ""}>${level.label}</option>`).join("");
+}
+
+function renderMinimumDiscipleshipLevelOptions(currentValue) {
+  const value = normalizeRoleRequirementLevelId(currentValue);
+  return [
+    `<option value="" ${value ? "" : "selected"}>不限制</option>`,
+    ...DISCIPLESHIP_LEVELS.map((level) => `<option value="${level.id}" ${level.id === value ? "selected" : ""}>${level.label}</option>`),
+  ].join("");
+}
+
+function getToddlerRoleQualifications() {
+  const service = getActiveServiceState();
+  service.rules = createToddlerRulesState(service.rules);
+  return service.rules.roleQualifications;
+}
+
+function getSmallGroupRoleQualifications(service = getSmallGroupServiceState()) {
+  service.settings = normalizeSmallGroupSettings(service.settings);
+  return service.settings.roleQualifications;
+}
+
+function getMainRoleMinimumDiscipleshipLevel(roleId) {
+  return normalizeRoleRequirementLevelId(getToddlerRoleQualifications()[roleId]);
+}
+
+function getSmallGroupDutyMinimumDiscipleshipLevel(dutyId, service = getSmallGroupServiceState()) {
+  return normalizeRoleRequirementLevelId(getSmallGroupRoleQualifications(service)[dutyId]);
+}
+
+function getDiscipleshipQualificationReason(worker, minimumLevelId) {
+  return workerMeetsDiscipleshipRequirement(worker, minimumLevelId) ? "" : "培育壘包不足";
+}
+
+function getMainDiscipleshipBlockedReason(worker, roleId) {
+  return getDiscipleshipQualificationReason(worker, getMainRoleMinimumDiscipleshipLevel(roleId));
+}
+
+function getSmallGroupDiscipleshipBlockedReason(worker, dutyId, service = getSmallGroupServiceState()) {
+  return getDiscipleshipQualificationReason(worker, getSmallGroupDutyMinimumDiscipleshipLevel(dutyId, service));
+}
+
+function getDiscipleshipQualificationMessage(worker, dutyLabel) {
+  return `🔴 培育壘包資格不足：${getDisplayName(worker)}（培育壘包：${getWorkerDiscipleshipLevelLabel(worker)}）不可擔任「${dutyLabel}」`;
 }
 
 function getWorkerIdentity(identityId) {

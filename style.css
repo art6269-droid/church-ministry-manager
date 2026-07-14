@@ -544,6 +544,40 @@ select:disabled {
   line-height: 1.5;
 }
 
+.module-subhead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.module-subhead h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.module-subhead > span {
+  max-width: 520px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.role-qualification-settings {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.role-qualification-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .module-grid {
   display: grid;
   grid-template-columns: 1.3fr 0.7fr;
@@ -2310,6 +2344,7 @@ input[type="checkbox"] {
   .workspace-actions,
   .lower-grid,
   .module-grid,
+  .role-qualification-grid,
   .summary-metrics,
   .small-group-summary-grid,
   .permission-guide-grid,
@@ -2477,9 +2512,15 @@ input[type="checkbox"] {
 
   .block-title,
   .section-heading,
-  .module-head {
+  .module-head,
+  .module-subhead {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .module-subhead > span {
+    max-width: none;
+    text-align: left;
   }
 
   .panel-actions {
